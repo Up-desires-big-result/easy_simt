@@ -1,0 +1,55 @@
+  0  3C200000  LDP r1, #0                   ld.param.u64 	%rd1, [_Z20shmem_diverge_kernelPKfPfi_param_0];
+  1  3C410000  LDP r2, #1                   ld.param.u64 	%rd2, [_Z20shmem_diverge_kernelPKfPfi_param_1];
+  2  3C620000  LDP r3, #2                   ld.param.u32 	%r3, [_Z20shmem_diverge_kernelPKfPfi_param_2];
+  3  40810000  CSRR r4, %ntid.x             mov.u32 	%r4, %ntid.x;
+  4  40A20000  CSRR r5, %ctaid.x            mov.u32 	%r5, %ctaid.x;
+  5  40C00000  CSRR r6, %tid.x              mov.u32 	%r1, %tid.x;
+  6  04E42980  IMAD r7, r4, r5, r6          mad.lo.s32 	%r2, %r4, %r5, %r1;
+  7  08808000  IADD r4, r0, #0              mov.f32 	%f23, 0f00000000;
+  8  1D1C6800  SETP p1, r7, r3, I_GE        setp.ge.s32	%p1, %r2, %r3;
+  9  45000004  BR p1, BB0_2                 @%p1 bra 	BB0_2;   ;; BRT -> pc 13
+ 10  0C678002  SHL r3, r7, #2               ld.global.nc.f32 	%f23, [%rd5];
+ 11  2C811800  LDG r4, r1, r3               ld.global.nc.f32 	%f23, [%rd5];
+ 12  48800001  JOIN BB0_2                   ;; 插入：区域汇合
+BB0_2:
+ 13  0CA68002  SHL r5, r6, #2               shl.b32 	%r6, %r1, 2;
+ 14  38802800  STS r4, r5                   st.shared.f32 	[%r8], %f23;
+ 15  4C000000  BAR                          bar.sync 	0;
+ 16  08A08080  IADD r5, r0, #128            xor.b32  	%r9, %r1, 128;
+ 17  10862800  XOR r4, r6, r5               xor.b32  	%r9, %r1, 128;
+ 18  0CC48002  SHL r6, r4, #2               shl.b32 	%r10, %r9, 2;
+ 19  34803000  LDS r4, r6                   ld.shared.f32 	%f3, [%r12];
+ 20  1E101A00  SETP p2, r4, r0, F_GT        setp.gt.f32	%p2, %f3, 0f00000000;
+ 21  46000002  BR p2, BB0_4                 @%p2 bra 	BB0_4;   ;; BRT -> pc 46
+ 22  44800016  BR always, BB0_3             bra.uni 	BB0_3;
+BB0_4:
+ 23  1907F000  LUI r8, #0x3F800             mul.rn.f32 	%f8, %f3, 0f3F800347;
+ 24  15080347  ORI r8, r8, #0x0347          mul.rn.f32 	%f8, %f3, 0f3F800347;
+ 25  20C44000  FMUL r6, r4, r8              mul.rn.f32 	%f8, %f3, 0f3F800347;
+ 26  19471A36  LUI r10, #0x38D1B            add.rn.f32 	%f9, %f8, 0f38D1B717;
+ 27  154AB717  ORI r10, r10, #0xB717        add.rn.f32 	%f9, %f8, 0f38D1B717;
+ 28  25265000  FADD r9, r6, r10             add.rn.f32 	%f9, %f8, 0f38D1B717;
+ 29  20C94000  FMUL r6, r9, r8              mul.rn.f32 	%f10, %f9, 0f3F800347;
+ 30  25265000  FADD r9, r6, r10             add.rn.f32 	%f11, %f10, 0f38D1B717;
+ 31  20C94000  FMUL r6, r9, r8              mul.rn.f32 	%f12, %f11, 0f3F800347;
+ 32  25265000  FADD r9, r6, r10             add.rn.f32 	%f13, %f12, 0f38D1B717;
+ 33  20C94000  FMUL r6, r9, r8              mul.rn.f32 	%f14, %f13, 0f3F800347;
+ 34  25265000  FADD r9, r6, r10             add.rn.f32 	%f15, %f14, 0f38D1B717;
+ 35  20C94000  FMUL r6, r9, r8              mul.rn.f32 	%f16, %f15, 0f3F800347;
+ 36  25265000  FADD r9, r6, r10             add.rn.f32 	%f17, %f16, 0f38D1B717;
+ 37  20C94000  FMUL r6, r9, r8              mul.rn.f32 	%f18, %f17, 0f3F800347;
+ 38  25265000  FADD r9, r6, r10             add.rn.f32 	%f19, %f18, 0f38D1B717;
+ 39  20C94000  FMUL r6, r9, r8              mul.rn.f32 	%f20, %f19, 0f3F800347;
+ 40  25265000  FADD r9, r6, r10             add.rn.f32 	%f21, %f20, 0f38D1B717;
+ 41  20C94000  FMUL r6, r9, r8              mul.rn.f32 	%f22, %f21, 0f3F800347;
+ 42  25265000  FADD r9, r6, r10             add.rn.f32 	%f24, %f22, 0f38D1B717;
+ 43  48800003  JOIN BB0_5                   bra.uni 	BB0_5;
+BB0_3:
+ 44  29240000  FNEG r9, r4                  neg.f32 	%f24, %f3;
+ 45  48800001  JOIN BB0_5                   ;; 插入：区域汇合
+BB0_5:
+ 46  45000003  BR p1, BB0_7                 @%p1 bra 	BB0_7;   ;; BRT -> pc 49
+ 47  31221800  STG r9, r2, r3               st.global.f32 	[%rd8], %f24;
+ 48  48800001  JOIN BB0_7                   ;; 插入：区域汇合
+BB0_7:
+ 49  50000000  RET                          ret;
