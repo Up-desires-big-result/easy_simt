@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-iss.py — golden-core ISA 指令级模拟器（功能模型）。
+iss.py — easy_simt ISA 指令级模拟器（功能模型）。
 
 特性：
   * 完整实现草案 §2.6 的 BR/JOIN + BRT 分化处理语义；

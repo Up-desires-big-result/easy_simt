@@ -68,7 +68,7 @@ def main():
     if not selftest(verbose=True):
         sys.exit('softfloat selftest FAILED')
 
-    print('== 1. 汇编 PTX -> golden-core ISA ==')
+    print('== 1. 汇编 PTX -> easy_simt ISA ==')
     prog, _ = ptx2gold.assemble_file(args.ptx)
     m = prog['meta']
     print('  指令数=%d  物理寄存器用到 r%d  BRT 表项=%d'

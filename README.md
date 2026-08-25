@@ -1,15 +1,16 @@
 # easy_simt
 
-Golden kernel 专用 SIMT 处理器（golden-core）设计仓库。
+Golden kernel 专用 SIMT 处理器（easy_simt）设计仓库。
 
 ## 目录约定
 
 - 每个硬件单元（top 及各子模块）镜像同一结构：`docs/` + `rtl/` + `tb/`
 - 单元内命名：`rtl/<单元名>.v`、`tb/<单元名>_tb.v`、`docs/<单元名>_spec.md`，单元名与目录名一致
 - `top/docs/`：项目级文档
-  - `golden_core_isa_spec_v0.1.md` —— ISA 规范（设计唯一依据）
-  - `golden-kernel-isa-uarch-draft-v0.1.md` —— 设计草案（背景与微架构记录）
-- `top/assembler/`：PTX → golden ISA 汇编器（Python）
+  - `isa_spec_v0.1.md` —— ISA 规范（设计唯一依据）
+  - `ma_spec_v0.1.md` —— 顶层微架构规范
+  - `intf_spec_v0.1.md` —— 顶层接口规范（模块端口命名与 vld/rdy 协议）
+- `top/assembler/`：PTX → easy_simt ISA 汇编器（Python）
 - `top/simulator/`：指令级模拟器（ISS）与黄金测试
 - `top/program/`：CUDA 源码、PTX、机器码镜像（program.hex / program.json / program.lst）
 

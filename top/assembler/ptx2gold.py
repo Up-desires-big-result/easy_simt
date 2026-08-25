@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ptx2gold.py — 将 golden kernel shmem_diverge 的 PTX 翻译为 golden-core ISA
+ptx2gold.py — 将 golden kernel shmem_diverge 的 PTX 翻译为 easy_simt ISA
 （硬件 ISA 与微架构草案 v0.1，含勘误：IADD/SHL 立即数模式位为 bit[15]，
 立即数占 [14:0] 共 15 位）。
 
@@ -679,7 +679,7 @@ def assemble_file(ptx_path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description='PTX(shmem_diverge) -> golden-core ISA')
+    ap = argparse.ArgumentParser(description='PTX(shmem_diverge) -> easy_simt ISA')
     ap.add_argument('ptx', help='PTX 源文件')
     ap.add_argument('-o', '--outdir', default='out', help='输出目录')
     args = ap.parse_args()
