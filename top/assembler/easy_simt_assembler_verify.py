@@ -6,7 +6,7 @@ easy_simt_assembler_verify.py — 汇编器端到端验证程序（内含功能�
 流程：PTX --easy_simt_assembler--> 指令镜像+BRT --ISS 执行--> 输出数组 --对比--> CPU 参考。
 
 用法：
-  python3 easy_simt_assembler_verify.py --ptx ../program/easy_simt_kernel.ptx
+  python3 easy_simt_assembler_verify.py --ptx ../kernel/easy_simt_kernel.ptx
   python3 easy_simt_assembler_verify.py --selftest              # 软浮点自检
   python3 easy_simt_assembler_verify.py --prog easy_simt_kernel.json  # 直接装载镜像跑 ISS
 
