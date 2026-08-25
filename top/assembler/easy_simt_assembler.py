@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ptx2gold.py — 将 golden kernel shmem_diverge 的 PTX 翻译为 easy_simt ISA
+easy_simt_assembler.py — 将 golden kernel（easy_simt_kernel.ptx）翻译为 easy_simt ISA
 （硬件 ISA 与微架构草案 v0.1，含勘误：IADD/SHL 立即数模式位为 bit[15]，
 立即数占 [14:0] 共 15 位）。
 
@@ -21,11 +21,11 @@ ptx2gold.py — 将 golden kernel shmem_diverge 的 PTX 翻译为 easy_simt ISA
       - 保持 PTX 原始块布局（不做重排，故比手工优化版多 1 条 bra.uni）。
 
 用法：
-  python3 ptx2gold.py shmem_diverge.ptx -o out/
+  python3 easy_simt_assembler.py easy_simt_kernel.ptx -o out/
 输出：
-  out/program.json   IMEM 字序列 + BRT + 标号表（ISS / RTL 装载器输入）
-  out/program.lst    带 PTX 源注释的汇编清单
-  out/program.hex    十六进制镜像
+  out/easy_simt_kernel.json   IMEM 字序列 + BRT + 标号表（ISS / RTL 装载器输入）
+  out/easy_simt_kernel.lst    带 PTX 源注释的汇编清单
+  out/easy_simt_kernel.hex    十六进制镜像
 """
 
 import argparse
@@ -679,19 +679,19 @@ def assemble_file(ptx_path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description='PTX(shmem_diverge) -> easy_simt ISA')
+    ap = argparse.ArgumentParser(description='PTX(easy_simt_kernel) -> easy_simt ISA')
     ap.add_argument('ptx', help='PTX 源文件')
     ap.add_argument('-o', '--outdir', default='out', help='输出目录')
     args = ap.parse_args()
 
     prog, listing = assemble_file(args.ptx)
     os.makedirs(args.outdir, exist_ok=True)
-    with open(os.path.join(args.outdir, 'program.json'), 'w', encoding='utf-8') as f:
+    with open(os.path.join(args.outdir, 'easy_simt_kernel.json'), 'w', encoding='utf-8') as f:
         json.dump(prog, f, indent=1)
-    with open(os.path.join(args.outdir, 'program.hex'), 'w', encoding='utf-8') as f:
+    with open(os.path.join(args.outdir, 'easy_simt_kernel.hex'), 'w', encoding='utf-8') as f:
         for w in prog['words']:
             f.write('%08X\n' % w)
-    with open(os.path.join(args.outdir, 'program.lst'), 'w', encoding='utf-8') as f:
+    with open(os.path.join(args.outdir, 'easy_simt_kernel.lst'), 'w', encoding='utf-8') as f:
         inv = {v: k for k, v in prog['labels'].items()}
         brt = {int(k): v for k, v in prog['brt'].items()}
         for i, s in enumerate(listing):
