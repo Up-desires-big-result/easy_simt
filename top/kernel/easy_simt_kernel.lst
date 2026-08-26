@@ -15,8 +15,8 @@ BB0_2:
  13  0CA68002  SHL r5, r6, #2               shl.b32 	%r6, %r1, 2;
  14  38802800  STS r4, r5                   st.shared.f32 	[%r8], %f23;
  15  4C000000  BAR                          bar.sync 	0;
- 16  08A08080  IADD r5, r0, #128            xor.b32  	%r9, %r1, 128;
- 17  10862800  XOR r4, r6, r5               xor.b32  	%r9, %r1, 128;
+ 16  08A08010  IADD r5, r0, #16             xor.b32  	%r9, %r1, 16;
+ 17  10862800  XOR r4, r6, r5               xor.b32  	%r9, %r1, 16;
  18  0CC48002  SHL r6, r4, #2               shl.b32 	%r10, %r9, 2;
  19  34803000  LDS r4, r6                   ld.shared.f32 	%f3, [%r12];
  20  1E101A00  SETP p2, r4, r0, F_GT        setp.gt.f32	%p2, %f3, 0f00000000;

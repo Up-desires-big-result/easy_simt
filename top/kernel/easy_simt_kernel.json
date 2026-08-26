@@ -16,7 +16,7 @@
   212238338,
   947922944,
   1275068416,
-  144736384,
+  144736272,
   277227520,
   214204418,
   880816128,
@@ -67,7 +67,7 @@
   "n_instr": 50,
   "max_phys_reg": 10,
   "entry": "_Z20shmem_diverge_kernelPKfPfi",
-  "shared_bytes": 1024,
+  "shared_bytes": 128,
   "n_params": 3
  }
 }

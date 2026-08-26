@@ -15,7 +15,7 @@ easy_simt_assembler_verify.py — 汇编器端到端验证程序（内含功能�
     IEEE-754 FP32 RN 软浮点（mul/add/neg/gt），单舍入、位精确，
     输出 subnormal 按 FTZ 处理；CPU 参考与 ISS 使用同一软浮点，保证位精确可比；
   * ISS 为功能模型（顺序语义），只验证汇编结果的功能正确性；
-    微架构级模拟器后续按 ma_spec 另行实现（top/simulator/）；
+    事务级 C 参考模型按 ma_spec 另行实现（top/cmodel/）；
   * 全局访存延迟 MEM_LAT 只影响调度交织与周期计数，不影响功能；
   * 默认按原始规模运行（block=256 → 8 lane × 32 warp，grid=4，N=1000），
     与 GPGPU-Sim 基线语义一致。

@@ -24,7 +24,7 @@
 	.reg .b32 	%r<13>;
 	.reg .b64 	%rd<9>;
 	// demoted variable
-	.shared .align 4 .b8 _ZZ20shmem_diverge_kernelPKfPfiE4tile[1024];
+	.shared .align 4 .b8 _ZZ20shmem_diverge_kernelPKfPfiE4tile[128];
 
 	ld.param.u64 	%rd1, [_Z20shmem_diverge_kernelPKfPfi_param_0];
 	ld.param.u64 	%rd2, [_Z20shmem_diverge_kernelPKfPfi_param_1];
@@ -48,7 +48,7 @@ BB0_2:
 	add.s32 	%r8, %r7, %r6;
 	st.shared.f32 	[%r8], %f23;
 	bar.sync 	0;
-	xor.b32  	%r9, %r1, 128;
+	xor.b32  	%r9, %r1, 16;
 	shl.b32 	%r10, %r9, 2;
 	add.s32 	%r12, %r7, %r10;
 	ld.shared.f32 	%f3, [%r12];
