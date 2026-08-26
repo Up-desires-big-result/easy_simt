@@ -1,4 +1,4 @@
-// shmem_diverge.cu
+// easy_simt_kernel.cu
 // 演示 kernel：共享内存交换 + 数据相关分支分化
 //   1. 全局内存 -> 共享内存写入, __syncthreads, 再读邻居线程的数据(交换)
 //   2. 按数据正负走不同长度的计算路径 => warp 内真实分支分化
@@ -8,8 +8,8 @@
 #include <cmath>
 #include <cuda_runtime.h>
 
-#define N     1000          // 故意不是 256 的整数倍
-#define BLOCK 256
+#define N     1000          // 故意不是 32 的整数倍
+#define BLOCK 32            // easy_simt 硬件口径: 32 线程/块
 
 #define CUDA_CHECK(call)                                             \
     do {                                                             \
@@ -34,8 +34,8 @@ __global__ void shmem_diverge_kernel(const float* __restrict__ in,
     tile[threadIdx.x] = v;                 // 共享内存写
     __syncthreads();
 
-    // 读"邻居"的数据: 线程 tid 读 tid^0x80 位置 => 线程间交换, 共享内存读
-    float x = tile[threadIdx.x ^ 0x80];
+    // 读"邻居"的数据: 线程 tid 读 tid^0x10 位置 => 线程间交换, 共享内存读
+    float x = tile[threadIdx.x ^ 0x10];
 
     // 数据相关分支: 正数走 8 次 FMA 长路径, 负数走短路径 => 分化点 2
     float r;
@@ -53,7 +53,7 @@ __global__ void shmem_diverge_kernel(const float* __restrict__ in,
 
 // CPU 参考实现
 static void cpu_reference(const float* in, float* ref, int n) {
-    // 与 kernel 相同的交换规则: 块内位置异或 0x80
+    // 与 kernel 相同的交换规则: 块内位置异或 0x10
     for (int b = 0; b * BLOCK < n; ++b) {
         int base = b * BLOCK;
         float tmp[BLOCK];
@@ -64,7 +64,7 @@ static void cpu_reference(const float* in, float* ref, int n) {
         for (int t = 0; t < BLOCK; ++t) {
             int gid = base + t;
             if (gid >= n) break;
-            float x = tmp[t ^ 0x80];
+            float x = tmp[t ^ 0x10];
             float r;
             if (x > 0.0f) {
                 r = x;
@@ -93,7 +93,7 @@ int main() {
     CUDA_CHECK(cudaMalloc(&d_out, bytes));
     CUDA_CHECK(cudaMemcpy(d_in, h_in, bytes, cudaMemcpyHostToDevice));
 
-    int grid = (N + BLOCK - 1) / BLOCK;    // 4 个块
+    int grid = (N + BLOCK - 1) / BLOCK;    // 32 个块
     shmem_diverge_kernel<<<grid, BLOCK>>>(d_in, d_out, N);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
