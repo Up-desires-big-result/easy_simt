@@ -36,7 +36,7 @@ SIM_DIR   := cmodel
 BUILD     := build/sim
 BUILD_DBG := build/sim_dbg
 
-# 黄金回归参数（ma_spec §1.7 T3 硬件版口径，与模型编译参数一致，可覆盖）
+# 黄金回归参数（ma_spec §1.7 easy_simt 硬件口径，与模型编译参数一致，可覆盖）
 KERNEL ?= kernel/easy_simt_kernel.hex
 N      ?= 1000
 WARPS  ?= 4

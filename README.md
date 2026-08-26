@@ -39,7 +39,7 @@ make help          # 列出全部目标
 make clean         # 清理 build/
 ```
 
-回归变量可覆盖，默认为 ma_spec §1.7 的 T3 硬件口径：
+回归变量可覆盖，默认为 ma_spec §1.7 的 easy_simt 硬件口径：
 
 ```
 make sim_run KERNEL=kernel/easy_simt_kernel.hex N=1000 WARPS=4 LANES=8 MEMLAT=20
@@ -79,7 +79,7 @@ python3 top/assembler/easy_simt_assembler_verify.py --ptx <原版 PTX> --warps 3
 python3 top/assembler/easy_simt_assembler_verify.py --selftest        # 软浮点自检
 ```
 
-注意：`top/kernel/` 现为 T3 硬件口径镜像（32 线程/块、块内置换掩码 16），
+注意：`top/kernel/` 现为 easy_simt 硬件口径镜像（32 线程/块、块内置换掩码 16），
 其端到端功能验证由 `make sim_run` 完成，不适用上述原口径验证程序。
 
 ## 黄金测试

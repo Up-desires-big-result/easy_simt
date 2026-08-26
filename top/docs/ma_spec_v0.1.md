@@ -159,7 +159,7 @@ flowchart TB
 
 **参考体系**：`assembler/easy_simt_assembler_verify.py`（内含功能级 ISS）为**纯功能位精确参考**——v1 引入 icache/L1 后，RTL 周期数与 ISS 不再具备可比性，周期只作观测项，不作验收项；功能比对仍以输出数据位精确为准。GPGPU-Sim SM7_TITANV 数据（735 周期、37424 warp 指令、IPC 50.92、shmem_insn=2048、数据分支 32 warp 全分化、边界分化 1 warp）作为 32-lane 粒度的外部对照，用于解读而非验收。
 
-黄金用例 T3：`N=1000, grid=32, MASK=16`（硬件版，128 warp）。验收项：
+黄金用例 easy_simt：`N=1000, grid=32, MASK=16`（硬件版，128 warp）。验收项：
 
 | # | 验收项 | 期望 | 观测点 |
 |---|---|---|---|
