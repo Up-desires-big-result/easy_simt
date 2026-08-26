@@ -13,7 +13,7 @@
 
 本机是**单 kernel 验证原型机**：硬件只执行一个程序（golden kernel `shmem_diverge` 的 easy_simt ISA 汇编），并以其为唯一调试与验证目标。
 
-Golden kernel 语义回顾（硬件版参数）：N=1000，grid=32 块 × 32 线程/块，分化掩码 MASK=16。每线程先做边界判定（gid<N），将全局输入写入共享内存，经 `bar.sync` 同步后读回置换位置（`tid^MASK`）的值；正值数据走 8 次乘加分离的浮点迭代（`r = r*1.0001f + 0.0001f`，ISA 中乘法与加法各一条指令，无 FMA），否则取负；结果写回全局。程序静态 50 条指令，BRT 重聚表 3 个表项 {9→13, 21→46, 46→49}。
+Golden kernel 语义回顾（硬件版参数）：N=1000，grid=32 块 × 32 线程/块，分化掩码 MASK=16。每线程先做边界判定（gid<N），将全局输入写入共享内存，经 `bar.sync` 同步后读回置换位置（`tid^MASK`）的值；正值数据走 8 次乘加分离的浮点迭代（`r = r*1.0001f + 0.0001f`，ISA 中乘法与加法各一条指令，均按 IEEE-754 标准），否则取负；结果写回全局。程序静态 50 条指令，BRT 重聚表 3 个表项 {9→13, 21→46, 46→49}。
 
 **设计宪章：一切最简，能顺序就顺序，能阻塞就阻塞。** 基线的判据是"正确所必需"：每一处与性能相关的机制都以参数位形式存在、默认取最简值。按此定位，后续对原型的**任何改动都构成一次可单独量化收益的优化**（如 coalesce、bank 并行、转发、多块并发等），这也是本项目的演进路线。
 
@@ -51,11 +51,11 @@ Golden kernel 语义回顾（硬件版参数）：N=1000，grid=32 块 × 32 线
 
 | 模块 | 缩写 | 职责 | 边界说明 | 章节 |
 |---|---|---|---|---|
-| SIMT Frontend | sf | 每 warp 一份 PC；取指发起；定长译码、立即数扩展、`ld.param`；互锁记分板；issue 分派；SIMT 控制（active mask、分化栈、BRT、mask 更新、PC 重定向） | 架构状态之家。分支的**判定**在 ialu，**处置**（压栈/换 mask/重定向）在 sf | §2 |
+| SIMT Frontend | sf | 每 warp 一份 PC；取指发起；定长译码、立即数扩展、`ld.param`；冒险检测与互锁记分板；issue 分派；SIMT 控制（active mask、分化栈、BRT、mask 更新、PC 重定向） | 分支的**判定**在 ialu，**处置**（压栈/换 mask/重定向）在 sf | §2 |
 | Warp Scheduler | ws | 按 warp id 顺序选发射；汇聚停顿源；`bar.sync` 到达计数与统一释放；块完成判定（4 warp 全 `ret`） | 只管 warp 粒度行为，不碰块级决策 | §3 |
 | Block Scheduler | bs | 纯块派发：推进 grid、下发启动上下文 `{blockIdx, N, SHBASE}`、收 `block_done` 拉下一块；`MAX_BLOCKS_INFLIGHT`/SHBASE 分区逻辑的归属 | 不做屏障、不碰每周期行为 | §4 |
 | 整数 ALU | ialu | IADD/SHL/XOR/mad.lo.s32/setp；分支解析（每 lane taken 向量、目标、BRT 表项）回注 sf | setp 产每 lane 谓词，直接喂分支判定 | §5 |
-| 浮点 ALU | falu | f32 mul/add/neg，RN 舍入 | 无 FMA | §6 |
+| 浮点 ALU | falu | FMUL/FADD/FNEG，IEEE-754 binary32，RN 舍入 | 8 lane 并行、锁步 | §6 |
 | Load/Store Unit | lsu | per-lane 地址生成（基址+偏移）、active mask 门控、8-lane 锁步一拍发出、请求分 shmem/global 两路、装载数据引导写回、向 ws 报停顿 | 保持薄：不含 tag 比较、不含阵列/bank | §7 |
 | Instruction Cache | icache | 直接映射指令缓存；缺失经 memif 回填、阻塞重放 | 32B 行 = 8 条指令 | §8 |
 | L1 + Shared Memory | l1sm | 统一 SRAM（8 bank），L1 与共享内存共享；类位+钉扎自指标签管理；缺失阻塞、写直通不写分配 | 行的概念归它管；8-bank 锁步、单行单拍，跨行/冲突才串行；无 coalesce | §9 |
@@ -76,7 +76,7 @@ flowchart TB
   subgraph EXEC["执行单元"]
     direction LR
     ialu["ialu<br/>整数运算 / setp / mad.lo<br/>分支解析"]
-    falu["falu<br/>f32 mul/add/neg<br/>RN / 无FMA"]
+    falu["falu<br/>FMUL/FADD/FNEG<br/>IEEE-754 / RN"]
     lsu["lsu<br/>per-lane地址生成 / 请求分流"]
   end
 
@@ -142,7 +142,7 @@ flowchart TB
 | `NLANES` | 8 | lane/warp | — |
 | `NWARPS` | 4 | warp/块 | — |
 | `MAX_BLOCKS_INFLIGHT` | 1 | 并发块数 | 多块并发 |
-| `WS_POLICY` | ID_ORDER | warp 选择策略 | oldest-first / GTO |
+| `WS_POLICY` | ID_ORDER | warp 选择策略（warp id 顺序轮转） | — |
 | `DIV_STACK_DEPTH` | 4 | 分化栈深 | — |
 | `BRT_ENTRIES` | 4 | 重聚表表项 | — |
 | `ILINE_B` | 32 | 指令行字节数 | — |
@@ -175,11 +175,11 @@ V3 与 32-lane 基线"全分化"的差异纯属粒度效应：8 lane 下部分 w
 
 ## 2. sf — SIMT Frontend
 
-**职责**：架构状态之家。每 warp 一份 PC、active mask（8b）、分化栈（深 4，表项 `{mask, 重聚PC}`）；取指发起、定长译码、立即数扩展、`ld.param`；互锁记分板；issue 分派；SIMT 分化控制。分支的**判定**在 ialu，**处置**在 sf。
+**职责**：每 warp 一份 PC、active mask（8b）、分化栈（深 4，表项 `{mask, 重聚PC}`）；取指发起、定长译码、立即数扩展、`ld.param`；冒险检测与互锁（记分板）；issue 分派；SIMT 分化控制。分支的**判定**在 ialu，**处置**在 sf。
 
 **取指**：按 ws 授予（`grant{warp_id}`）向 icache 发 `fetch{pc}`，收 `fetch_resp{inst}`；缺失期间该 warp 停（IMISS）。遇分支阻塞取指，等 ialu 决议后取下一条，无冲刷。
 
-**互锁记分板**：数据冒险停顿至写回完成（`wb_done` 清除）。`bar.sync` 到达发射点时检查**该 warp 在 lsu 无未退休访存**，未排空按 HAZARD 互锁（屏障可见性兜底）。
+**冒险检测与互锁**：sf 用记分板（每 warp 寄存器忙位）检测数据冒险；检测到冒险即停顿发射，直至写回完成（`wb_done` 清除）。`bar.sync` 到达发射点时检查**该 warp 在 lsu 无未退休访存**，未排空按 HAZARD 互锁（屏障可见性兜底）。
 
 **分化控制**：
 
@@ -194,7 +194,7 @@ V3 与 32-lane 基线"全分化"的差异纯属粒度效应：8 lane 下部分 w
 
 **职责**：只管 warp 粒度行为，不碰块级决策。按 warp id 顺序选发射；汇聚停顿源；`bar.sync` 到达计数与统一释放；块完成判定。
 
-**选择策略**：维护 2 位轮转指针，自指针位置起找第一个可发射（无停顿源）的 warp 发射，发射后指针推进。无年龄表、无策略表；策略参数 `WS_POLICY` 默认 `ID_ORDER`。
+**选择策略**：维护 2 位轮转指针，自指针位置起找第一个可发射（无停顿源）的 warp 发射，发射后指针推进。无年龄表、无策略表，按 warp id 顺序轮转。
 
 **停顿源枚举**：`stall_reason ∈ { NONE, HAZARD, IMISS, LMISS, BARRIER, BRSTALL, DONE }`，对每 warp 汇聚各来源：HAZARD（sf 记分板互锁）、IMISS（sf 转发取指缺失）、LMISS（lsu 上报数据缺失）、BARRIER（等屏障）、BRSTALL（分支决议中）、DONE（已 `ret`）。
 
@@ -224,7 +224,7 @@ V3 与 32-lane 基线"全分化"的差异纯属粒度效应：8 lane 下部分 w
 
 ## 6. falu — Floating-point ALU
 
-**职责**：f32 mul/add/neg，RN 舍入。**无 FMA**（对应 ISA 不提供 FMA、`-fmad=false` 语义）。数据通路 **8 lane 并行、锁步**：一拍对 8 个 lane 同时运算，产出 wdata[8×32]。
+**职责**：提供 FMUL/FADD/FNEG，按 IEEE-754 binary32、舍入到最近偶数（RN）执行标准乘法与加法。数据通路 **8 lane 并行、锁步**：一拍对 8 个 lane 同时运算，产出 wdata[8×32]。
 
 **接口**：收 `sf_falu_issue`；发 `falu_rf_wb{wdata}`、`falu_sf_wbdone{warp_id,rd}`。
 
