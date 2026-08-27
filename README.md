@@ -89,3 +89,49 @@ cd top && make sim_run
 ```
 
 通过标准：上表 V1–V5 全部 PASS，末行输出 `OVERALL = PASS`。
+
+
+## 工艺库（nangate45）
+
+门级综合与时序对照使用 **nangate45** 工艺库：SI2 Nangate Open Cell Library
+（版本 `PDKv1.3_v2010_12.Apache.CCL`）套 FreePDK45 设计规则，随
+OpenROAD-flow-scripts 仓库发布，无需签协议。标准单元只有 typical 一个工艺角、
+无 SDF、无器件模型卡，因此门级面积与时序只作同一口径下的相对比较，不作签核依据。
+
+### 获取
+
+工艺库放在仓库外的 `$PDK_ROOT`（不入库；`setup.sh` 只导出 `PROJ_ROOT`，
+`PDK_ROOT` 需自行 `export`）：
+
+```
+git clone --depth 1 https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts.git $PDK_ROOT/orfs
+ln -s $PDK_ROOT/orfs/flow/platforms/nangate45 $PDK_ROOT/nangate45
+```
+
+只引用、不复制、不手改，保持单一来源。本节及后续 flow 脚本中的数字出自
+`orfs` HEAD `7ff3adf`。
+
+### 使用
+
+综合前端取 oss-cad-suite（Yosys ≥ 0.58，含 yosys-abc）；物理验证侧 KLayout
+≥ 0.28.8（OpenROAD 侧 `etc/DependencyInstaller.sh` 锁 `klayoutVersion=0.30.7`）。
+读库自检：
+
+```
+LIB=$PDK_ROOT/nangate45/lib/NangateOpenCellLibrary_typical.lib
+yosys -p "read_liberty -lib $LIB; stat"      # Imported 135 cell types
+```
+
+路径与单元名单一律从 `$PDK_ROOT/nangate45/config.mk` 取，不在本仓库另抄一份：
+`TECH_LEF`、`SC_LEF`、`LIB_FILES`、`PLACE_SITE`、`DONT_USE_CELLS`、`FILL_CELLS`、
+`TIEHI_CELL_AND_PORT`、`TIELO_CELL_AND_PORT`。
+
+- 存储阵列：库内无 SRAM，用 `lef/`、`lib/` 下的 `fakeram45_*` 宏（各 26 档），
+  或按 BSG bsg_fakeram 的 JSON 配置生成新几何；配置字段只有
+  `{name, width, depth, banks}`，多口需拆 bank 或多宏拼接。
+- 物理验证：DRC 用 `drc/FreePDK45.lydrc`（KLayout 执行，无需厂商授权）；
+  LVS 基准为 `cdl/NangateOpenCellLibrary.cdl`（135 个 `.SUBCKT`、0 个 `.model`，
+  故只能做拓扑比对，不能做晶体管级仿真）。
+
+当前 `top/Makefile` 未接入综合目标（`rtl`、`cosim` 仍为占位），工艺库待 RTL
+阶段启用。
