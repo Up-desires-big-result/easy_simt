@@ -12,37 +12,45 @@ source setup.sh
 
 ## 目录约定
 
-- 每个硬件单元（top 及各子模块）镜像同一结构：`docs/` + `rtl/` + `tb/`
+构建入口 `Makefile` 位于仓库根，与 `top/` 同级。每个硬件单元（`top` 及各子模块）
+镜像同一结构：`docs/` + `rtl/` + `tb/`。子模块目录与 `top/` 同级平铺。
+
 - 单元内命名：`rtl/<单元名>.v`、`tb/<单元名>_tb.v`、`docs/<单元名>_spec.md`，单元名与目录名一致
-- `top/docs/`：项目级文档
-  - `isa_spec_v0.1.md` —— ISA 规范（设计唯一依据）
-  - `ma_spec_v0.1.md` —— 顶层微架构规范
-  - `intf_spec_v0.1.md` —— 顶层接口规范（模块端口命名与 vld/rdy 协议）
-- `top/assembler/`：PTX → easy_simt ISA 汇编器与端到端验证程序（内含功能级 ISS）
-- `top/cmodel/`：事务级（transaction-accurate）C 参考模型。不建模时钟，模块间按
-  vld/rdy 握手传递事务；结构上预留经 DPI-C 作为参考模型接入 SystemVerilog
-  testbench（模型库 + 前端分离，见 `top/Makefile` 头注）
-- `top/kernel/`：CUDA 源码、PTX、机器码镜像（easy_simt_kernel.hex / .json / .lst）
-- `top/rtl/`、`top/tb/`：预留（tb/ 只放 SystemVerilog 代码）
-- `top/Makefile`：统一构建与回归入口，产物落 `top/build/`
+- 子模块（与 `top/` 同级，各含 `docs/` + `rtl/` + `tb/`）：
+  `sf` `ws` `bs` `ialu` `falu` `lsu` `icache` `l1sm` `memif` `rf`
+  —— 模块职责与接口见 `top/docs/ma_spec_v0.1.md` §1.4 与 `intf_spec_v0.1.md`
+- `top/`：顶层单元，兼作项目级工具目录
+  - `top/docs/`：项目级文档
+    - `isa_spec_v0.1.md` —— ISA 规范（设计唯一依据）
+    - `ma_spec_v0.1.md` —— 顶层微架构规范
+    - `intf_spec_v0.1.md` —— 顶层接口规范（模块端口命名与 vld/rdy 协议）
+  - `top/assembler/`：PTX → easy_simt ISA 汇编器与端到端验证程序（内含功能级 ISS）
+  - `top/cmodel/`：事务级（transaction-accurate）C 参考模型。不建模时钟，模块间按
+    vld/rdy 握手传递事务；结构上预留经 DPI-C 作为参考模型接入 SystemVerilog
+    testbench（模型库 + 前端分离，见根 `Makefile` 头注）
+  - `top/kernel/`：CUDA 源码、PTX、机器码镜像（easy_simt_kernel.hex / .json / .lst）
+  - `top/rtl/`、`top/tb/`：顶层互连单元的 RTL 与 testbench（预留）
+- `tmp/`：所有编译、综合、仿真的中间文件与报告统一落此目录（与 `top/` 同级，不入库）；
+  `make clean` 清空整个 `tmp/`
 
-## 构建与回归（top/Makefile）
+## 构建与回归（根 Makefile）
 
-依赖：make、支持 C99 的 gcc。以下命令均在 `top/` 目录下执行。
+依赖：make、支持 C99 的 gcc。以下命令均在**仓库根目录**执行，产物统一落 `tmp/`。
 
 ```
-make               # release 编译      -> build/sim/easy_simt_sim
+make               # release 编译      -> tmp/build/sim/easy_simt_sim
 make sim_run       # 黄金回归（默认参数）
-make sim_dbg       # ASan/UBSan 调试编译 -> build/sim_dbg/easy_simt_sim_dbg
+make sim_dbg       # ASan/UBSan 调试编译 -> tmp/build/sim_dbg/easy_simt_sim_dbg
 make sim_run_dbg   # 调试版回归
+make syn <模块>    # 门级综合（预留，见下）
 make help          # 列出全部目标
-make clean         # 清理 build/
+make clean         # 清空 tmp/
 ```
 
 回归变量可覆盖，默认为 ma_spec §1.7 的 easy_simt 硬件口径：
 
 ```
-make sim_run KERNEL=kernel/easy_simt_kernel.hex N=1000 WARPS=4 LANES=8 MEMLAT=20
+make sim_run KERNEL=top/kernel/easy_simt_kernel.hex N=1000 WARPS=4 LANES=8 MEMLAT=20
 ```
 
 - `WARPS`/`LANES` 必须与模型编译参数（`NWARPS`/`NLANES`）一致，否则回归直接报配置不匹配；如需改动请重新编译并以 `-DNWARPS=… -DNLANES=…` 传入。
@@ -59,8 +67,10 @@ make sim_run KERNEL=kernel/easy_simt_kernel.hex N=1000 WARPS=4 LANES=8 MEMLAT=20
 | V4 | 边界分支分化 | 0 |
 | V5 | 无死锁 | `bs_top_done` 正常结束 |
 
-预留目标（占位，未实现）：`rtl`、`rtl_clean`、`wave`、`dpi`、`cosim`。其中
-`dpi`（模型库编译为 DPI-C 共享对象）与 `cosim`（RTL 与 C 参考模型对比回归）
+综合入口为 `make syn <模块>`（如 `make syn bs`），`<模块>` ∈ `sf ws bs ialu falu lsu
+icache l1sm memif rf`。综合前会校验模块名；当前综合流程尚未接入，调用会明确报未实现，
+待各模块 `rtl/` 与工艺库就绪后启用。其余预留目标：`rtl`、`rtl_clean`、`wave`、`dpi`、
+`cosim`。其中 `dpi`（模型库编译为 DPI-C 共享对象）与 `cosim`（RTL 与 C 参考模型对比回归）
 是 C 模型作为参考模型接入 SV testbench 的入口。
 
 ## 内核与汇编器
@@ -85,7 +95,7 @@ python3 top/assembler/easy_simt_assembler_verify.py --selftest        # 软浮�
 ## 黄金测试
 
 ```
-cd top && make sim_run
+make sim_run
 ```
 
 通过标准：上表 V1–V5 全部 PASS，末行输出 `OVERALL = PASS`。
@@ -129,9 +139,8 @@ yosys -p "read_liberty -lib $LIB; stat"      # Imported 135 cell types
 - 存储阵列：库内无 SRAM，用 `lef/`、`lib/` 下的 `fakeram45_*` 宏（各 26 档），
   或按 BSG bsg_fakeram 的 JSON 配置生成新几何；配置字段只有
   `{name, width, depth, banks}`，多口需拆 bank 或多宏拼接。
-- 物理验证：DRC 用 `drc/FreePDK45.lydrc`（KLayout 执行，无需厂商授权）；
-  LVS 基准为 `cdl/NangateOpenCellLibrary.cdl`（135 个 `.SUBCKT`、0 个 `.model`，
+- 物理验证：DRC 用 `drc/FreePDK45.lydrc`（KLayout 执行，无需厂商授权）；LVS 基准为
+  `cdl/NangateOpenCellLibrary.cdl`（135 个 `.SUBCKT`、0 个 `.model`，
   故只能做拓扑比对，不能做晶体管级仿真）。
 
-当前 `top/Makefile` 未接入综合目标（`rtl`、`cosim` 仍为占位），工艺库待 RTL
-阶段启用。
+根 `Makefile` 的综合目标 `make syn <模块>` 当前为占位，工艺库待 RTL 阶段启用。
