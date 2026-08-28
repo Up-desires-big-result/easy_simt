@@ -375,12 +375,17 @@ module tb_bs;
     end
   endtask
 
-  // ---------------- VCD（可选：+vcd=<path>） ----------------
+  // ---------------- 波形转储（可选：+vcd=<path> 或 +fsdb=<path>） ----------------
   string vcd_path;
+  string fsdb_path;
   initial begin
     if ($value$plusargs("vcd=%s", vcd_path)) begin
       $dumpfile(vcd_path);
       $dumpvars(0, tb_bs);
+    end
+    if ($value$plusargs("fsdb=%s", fsdb_path)) begin
+      $fsdbDumpfile(fsdb_path);
+      $fsdbDumpvars(0, tb_bs);
     end
   end
 

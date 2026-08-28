@@ -10,9 +10,9 @@
 #               make clean 清空整个 tmp/（此目录不入库）
 #
 #  已实现：C 事务级模型（top/cmodel/）编译与黄金回归；内核镜像自 top/kernel/*.cu 全链生成；
-#          RTL 编译与仿真执行（VCS，make rtl [run] <模块>）；门级综合与面积（Yosys + nangate45）；
-#          门级仿真（make netlist [run] <模块>）
-#  预留  ：门级仿真波形（顶层，供 power 使用）、功耗（网表+波形，顶层）、
+#          RTL 编译与仿真执行（VCS，make rtl [run|gui] <模块>）；
+#          门级综合（Yosys + nangate45）；门级仿真（make netlist [run|gui] <模块>）
+#  预留（均只跑顶层）：面积、门级仿真波形（供 power 使用）、功耗（网表+波形）、
 #          性能（顶层 kernel 完成 cycle 数）
 #
 #  内核单一源：top/kernel 只存 CUDA 源码 easy_simt_kernel.cu；
@@ -32,14 +32,15 @@
 #    make kernel            自 top/kernel/*.cu 生成内核镜像到 tmp/kernel/（.ptx/.hex/.json/.lst）
 #    make rtl <模块>        RTL 编译（VCS；testbench 为 <模块>/tb/tb_<模块>.sv）
 #    make rtl run <模块>    RTL 仿真执行（WAVE=1 出 VCD；参考模型经 DPI-C 随 simv 编译）
+#    make rtl gui <模块>    RTL 仿真执行并看波形（tb 直出 FSDB，拉起 nWave）
 #    make syn <模块>        门级综合（Yosys + nangate45，需 PDK_ROOT，产物落 tmp/syn/<模块>/）
-#    make area <模块>       打印综合报告中的面积
 #    make netlist <模块>    门级仿真编译（综合后网表 + 单元行为模型 + 原 testbench）
 #    make netlist run <模块> 门级仿真执行（对 C 参考模型事务级比对，WAVE=1 出门级 VCD）
+#    make netlist gui <模块> 门级仿真执行并看波形（tb 直出 FSDB，拉起 nWave）
 #    make help              查看全部目标（含预留）
 #    make clean             清空 tmp/
-#    预留：make wave（顶层门级仿真波形，供 power 使用）/ make power（顶层功耗）/
-#          make perf（顶层 kernel 完成 cycle 数）
+#    预留（均只跑顶层）：make area（顶层综合面积）/ make wave（门级仿真波形，供 power 使用）/
+#          make power（顶层功耗）/ make perf（顶层 kernel 完成 cycle 数）
 #
 # =============================================================================
 
@@ -95,16 +96,22 @@ BIN_DBG   := $(BUILD_DBG)/easy_simt_sim_dbg
 MOD := $(filter $(MODULES),$(MAKECMDGOALS))
 # 子命令：make cmodel run / make rtl run bs 中的 run 仅为标记，命中则编译后继续执行
 RUN_IT := $(filter run,$(MAKECMDGOALS))
+# 子命令：make rtl gui bs / make netlist gui bs 中的 gui：执行仿真（tb 直出
+# FSDB）并拉起波形浏览器
+GUI_IT := $(filter gui,$(MAKECMDGOALS))
 
 .PHONY: all sim cmodel kernel sim_run sim_dbg sim_run_dbg clean help \
-        syn area netlist power perf rtl rtl_clean wave verdi dpi cosim \
-        $(MODULES) run
+        syn netlist power perf rtl rtl_clean wave verdi dpi cosim \
+        $(MODULES) run gui
 
 # 允许模块名单独作为目标出现（供 $(MOD) 抓取），本身不做任何事
 $(MODULES): ;
 
 # run 作为 cmodel/rtl 的子命令出现（供 $(RUN_IT) 抓取），本身不做任何事
 run: ;
+
+# gui 作为 rtl/netlist 的子命令出现（供 $(GUI_IT) 抓取），本身不做任何事
+gui: ;
 
 all: sim
 
@@ -217,13 +224,6 @@ syn:
 	  echo "综合完成：网表与报告落 $(SYN_DIR)/$(MOD)/（$(MOD)_netlist.v / stat.rpt / syn.log）"; \
 	fi
 
-# 面积：打印综合报告（stat -liberty）中的单元数与芯片面积
-area: syn
-	@if [ -n "$(MOD)" ] && [ $(words $(MOD)) -eq 1 ] && [ -s $(SYN_DIR)/$(MOD)/stat.rpt ]; then \
-	  echo "== area $(MOD)（nangate45 typical，面积单位 µm²）=="; \
-	  grep -E 'cells$$|Chip area for|sequential elements' $(SYN_DIR)/$(MOD)/stat.rpt; \
-	fi
-
 # ===========================================================================
 #  门级仿真（netlist 仿真）：
 #    make netlist <模块>      仅编译（综合后网表 + 单元行为模型 + 原 testbench）
@@ -256,21 +256,35 @@ netlist:
 	  mkdir -p $(NETLIST_DIR)/$(MOD) && cd $(NETLIST_DIR)/$(MOD) && \
 	  { . /opt/synopsys/snop18.sh >/dev/null 2>&1 || true; } && \
 	  { command -v $(VCS) >/dev/null 2>&1 || { echo "未找到 vcs：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; } && \
-	  $(VCS) $(VCSFLAGS) -top tb_$(MOD) -o simv -Mdir=csrc \
+	  $(VCS) $(VCSFLAGS) -P "$$NOVAS/novas.tab" "$$NOVAS/pli.a" \
+	    -top tb_$(MOD) -o simv -Mdir=csrc \
 	    -CFLAGS "-std=gnu99 -I$(CURDIR)/$(SIM_DIR) -ffp-contract=off" \
 	    $(CURDIR)/$(SYN_DIR)/$(MOD)/$(MOD)_netlist.v \
 	    $(CURDIR)/$(NETLIST_DIR)/cells_sim.v \
 	    $(CURDIR)/$(MOD)/tb/tb_$(MOD).sv \
 	    $(addprefix $(CURDIR)/,$(DPI_SRC) $(CORE_SRCS)) || exit 1; \
-	  if [ -n "$(RUN_IT)" ]; then \
-	    ./simv $(if $(WAVE),+vcd=tb_$(MOD).vcd) | tee simv.out; \
-	    grep -q "SIM PASS" $(CURDIR)/$(NETLIST_DIR)/$(MOD)/simv.out; \
+	  if [ -n "$(RUN_IT)" ] || [ -n "$(GUI_IT)" ]; then \
+	    if [ -n "$(GUI_IT)" ]; then DUMP="+fsdb=tb_$(MOD).fsdb"; \
+	    else DUMP="$(if $(WAVE),+vcd=tb_$(MOD).vcd)"; fi; \
+	    ./simv $$DUMP | tee simv.out; \
+	    grep -q "SIM PASS" $(CURDIR)/$(NETLIST_DIR)/$(MOD)/simv.out || exit 1; \
+	    if [ -n "$(GUI_IT)" ]; then \
+	      command -v nWave >/dev/null 2>&1 || { echo "未找到 nWave：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; \
+	      echo "拉起 nWave：波形 tb_$(MOD).fsdb（FSDB 直出；日志：nwave.log）"; \
+	      nohup nWave -f tb_$(MOD).fsdb >nwave.log 2>&1 & \
+	    fi; \
 	  fi; \
 	fi
 
 # ===========================================================================
-#  【预留】波形 / 功耗 / 性能（实现时产物统一落 tmp/ 下）
+#  【预留】面积 / 波形 / 功耗 / 性能（均只跑顶层，实现时产物统一落 tmp/ 下）
 # ===========================================================================
+
+# 面积：make area，只跑顶层：打印顶层综合报告的面积
+area:
+	@echo "[预留] area：顶层面积需顶层综合（make syn top，依赖顶层 RTL），尚未实现。"
+	@echo "        实现后：打印顶层综合报告（单元数 / 芯片面积 / 时序占比），报告落 $(SYN_DIR)/top/。"
+	@exit 1
 
 # 波形：make wave，只跑顶层：跑门级仿真生成波形，供 power 功耗分析使用
 wave:
@@ -318,13 +332,21 @@ rtl:
 	  { . /opt/synopsys/snop18.sh >/dev/null 2>&1 || true; } && \
 	  { command -v $(VCS) >/dev/null 2>&1 || { echo "未找到 vcs：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; } && \
 	  ls $(CURDIR)/$(MOD)/rtl/*.sv >/dev/null 2>&1 || { echo "$(MOD)/rtl/ 下无 RTL"; exit 1; }; \
-	  $(VCS) $(VCSFLAGS) -top tb_$(MOD) -o simv -Mdir=csrc \
+	  $(VCS) $(VCSFLAGS) -P "$$NOVAS/novas.tab" "$$NOVAS/pli.a" \
+	    -top tb_$(MOD) -o simv -Mdir=csrc \
 	    -CFLAGS "-std=gnu99 -I$(CURDIR)/$(SIM_DIR) -ffp-contract=off" \
 	    $(CURDIR)/$(MOD)/rtl/*.sv $(CURDIR)/$(MOD)/tb/tb_$(MOD).sv \
 	    $(addprefix $(CURDIR)/,$(DPI_SRC) $(CORE_SRCS)) || exit 1; \
-	  if [ -n "$(RUN_IT)" ]; then \
-	    ./simv $(if $(WAVE),+vcd=tb_$(MOD).vcd) | tee simv.out; \
-	    grep -q "SIM PASS" $(CURDIR)/$(RTL_DIR)/$(MOD)/simv.out; \
+	  if [ -n "$(RUN_IT)" ] || [ -n "$(GUI_IT)" ]; then \
+	    if [ -n "$(GUI_IT)" ]; then DUMP="+fsdb=tb_$(MOD).fsdb"; \
+	    else DUMP="$(if $(WAVE),+vcd=tb_$(MOD).vcd)"; fi; \
+	    ./simv $$DUMP | tee simv.out; \
+	    grep -q "SIM PASS" $(CURDIR)/$(RTL_DIR)/$(MOD)/simv.out || exit 1; \
+	    if [ -n "$(GUI_IT)" ]; then \
+	      command -v nWave >/dev/null 2>&1 || { echo "未找到 nWave：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; \
+	      echo "拉起 nWave：波形 tb_$(MOD).fsdb（FSDB 直出；日志：nwave.log）"; \
+	      nohup nWave -f tb_$(MOD).fsdb >nwave.log 2>&1 & \
+	    fi; \
 	  fi; \
 	fi
 
@@ -378,13 +400,15 @@ help:
 	@echo "  kernel           自 $(KERNEL_SRC) 生成内核镜像到 $(KERNEL_DIR)/ (ptx/hex/json/lst)"
 	@echo "  rtl <模块>       RTL 编译（VCS，testbench 为 <模块>/tb/tb_<模块>.sv）"
 	@echo "  rtl run <模块>   RTL 仿真执行（VCS，testbench 为 <模块>/tb/tb_<模块>.sv）"
+	@echo "  rtl gui <模块>   RTL 仿真执行并看波形（tb 直出 FSDB，拉起 nWave）"
 	@echo "  syn <模块>       门级综合（Yosys + nangate45），产物落 tmp/syn/<模块>/"
-	@echo "  area <模块>      打印综合报告中的面积（单元数与芯片面积）"
 	@echo "  netlist <模块>   门级仿真编译（综合后网表 + 单元行为模型 + 原 testbench）"
 	@echo "  netlist run <模块> 门级仿真执行（对 C 参考模型事务级比对）"
+	@echo "  netlist gui <模块> 门级仿真执行并看波形（tb 直出 FSDB，拉起 nWave）"
 	@echo "  clean            清空 tmp/"
 	@echo ""
-	@echo "预留（未实现）："
-	@echo "  wave             门级仿真波形（顶层，供 power 使用）"
-	@echo "  power            网表+波形跑功耗（顶层）"
-	@echo "  perf             kernel 跑完的 cycle 数（顶层，第一个块下发到所有块结束）"
+	@echo "预留（未实现，均只跑顶层）："
+	@echo "  area             顶层综合面积（单元数 / 芯片面积 / 时序占比）"
+	@echo "  wave             门级仿真波形（供 power 使用）"
+	@echo "  power            网表+波形跑功耗"
+	@echo "  perf             kernel 跑完的 cycle 数（第一个块下发到所有块结束）"
