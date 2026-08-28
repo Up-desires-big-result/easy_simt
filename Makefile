@@ -10,7 +10,8 @@
 #               make clean 清空整个 tmp/（此目录不入库）
 #
 #  已实现：C 事务级模型（top/cmodel/）编译与黄金回归；内核镜像自 top/kernel/*.cu 全链生成；
-#          RTL 编译与仿真执行（VCS，make rtl [run] <模块>）；门级综合与面积（Yosys + nangate45）
+#          RTL 编译与仿真执行（VCS，make rtl [run] <模块>）；门级综合与面积（Yosys + nangate45）；
+#          门级仿真（make netlist [run] <模块>）
 #  预留  ：门级仿真波形（顶层，供 power 使用）、功耗（网表+波形，顶层）、
 #          性能（顶层 kernel 完成 cycle 数）
 #
@@ -33,6 +34,8 @@
 #    make rtl run <模块>    RTL 仿真执行（WAVE=1 出 VCD；参考模型经 DPI-C 随 simv 编译）
 #    make syn <模块>        门级综合（Yosys + nangate45，需 PDK_ROOT，产物落 tmp/syn/<模块>/）
 #    make area <模块>       打印综合报告中的面积
+#    make netlist <模块>    门级仿真编译（综合后网表 + 单元行为模型 + 原 testbench）
+#    make netlist run <模块> 门级仿真执行（对 C 参考模型事务级比对，WAVE=1 出门级 VCD）
 #    make help              查看全部目标（含预留）
 #    make clean             清空 tmp/
 #    预留：make wave（顶层门级仿真波形，供 power 使用）/ make power（顶层功耗）/
@@ -94,7 +97,7 @@ MOD := $(filter $(MODULES),$(MAKECMDGOALS))
 RUN_IT := $(filter run,$(MAKECMDGOALS))
 
 .PHONY: all sim cmodel kernel sim_run sim_dbg sim_run_dbg clean help \
-        syn area power perf rtl rtl_clean wave verdi dpi cosim \
+        syn area netlist power perf rtl rtl_clean wave verdi dpi cosim \
         $(MODULES) run
 
 # 允许模块名单独作为目标出现（供 $(MOD) 抓取），本身不做任何事
@@ -178,19 +181,23 @@ sim_run_dbg: $(BIN_DBG) $(KERNEL_HEX)
 YOSYS ?= yosys
 NANGATE_LIB = $(PDK_ROOT)/nangate45/lib/NangateOpenCellLibrary_typical.lib
 
+# 公共检查片段（供 syn / netlist 复用，展开为 shell 语句）
+PDK_CHECK = if [ -z "$(PDK_ROOT)" ]; then \
+	      echo "PDK_ROOT 未设置（见 README「工艺库（nangate45）」）"; exit 1; \
+	    fi; \
+	    [ -f "$(NANGATE_LIB)" ] || { echo "未找到标准单元库：$(NANGATE_LIB)"; exit 1; }
+YOSYS_FIND = if command -v $(YOSYS) >/dev/null 2>&1; then YBIN="$(YOSYS)"; \
+	     elif [ -x "$(PDK_ROOT)/oss-cad-suite/bin/yosys" ]; then YBIN="$(PDK_ROOT)/oss-cad-suite/bin/yosys"; \
+	     else echo "未找到 yosys（PATH 或 $(PDK_ROOT)/oss-cad-suite/bin/yosys）"; exit 1; fi
+
 syn:
 	@if [ -z "$(MOD)" ]; then \
 	  echo "用法：make syn <模块>，模块 ∈ { $(MODULES) }（当前未指定模块）"; exit 1; \
 	elif [ $(words $(MOD)) -gt 1 ]; then \
 	  echo "一次只能综合一个模块，收到：$(MOD)"; exit 1; \
 	else \
-	  if [ -z "$(PDK_ROOT)" ]; then \
-	    echo "PDK_ROOT 未设置（见 README「工艺库（nangate45）」）"; exit 1; \
-	  fi; \
-	  [ -f "$(NANGATE_LIB)" ] || { echo "未找到标准单元库：$(NANGATE_LIB)"; exit 1; }; \
-	  if command -v $(YOSYS) >/dev/null 2>&1; then YBIN="$(YOSYS)"; \
-	  elif [ -x "$(PDK_ROOT)/oss-cad-suite/bin/yosys" ]; then YBIN="$(PDK_ROOT)/oss-cad-suite/bin/yosys"; \
-	  else echo "未找到 yosys（PATH 或 $(PDK_ROOT)/oss-cad-suite/bin/yosys）"; exit 1; fi; \
+	  $(PDK_CHECK); \
+	  $(YOSYS_FIND); \
 	  RTL_FILES="$$(ls $(CURDIR)/$(MOD)/rtl/*.sv 2>/dev/null)"; \
 	  [ -n "$$RTL_FILES" ] || { echo "$(MOD)/rtl/ 下无 RTL"; exit 1; }; \
 	  DONT_USE=$$(sed -n 's/^export DONT_USE_CELLS = //p' $(PDK_ROOT)/nangate45/config.mk); \
@@ -215,6 +222,50 @@ area: syn
 	@if [ -n "$(MOD)" ] && [ $(words $(MOD)) -eq 1 ] && [ -s $(SYN_DIR)/$(MOD)/stat.rpt ]; then \
 	  echo "== area $(MOD)（nangate45 typical，面积单位 µm²）=="; \
 	  grep -E 'cells$$|Chip area for|sequential elements' $(SYN_DIR)/$(MOD)/stat.rpt; \
+	fi
+
+# ===========================================================================
+#  门级仿真（netlist 仿真）：
+#    make netlist <模块>      仅编译（综合后网表 + 单元行为模型 + 原 testbench）
+#    make netlist run <模块>  编译并执行（同一 testbench 对 C 参考模型事务级
+#                             比对，判据同 rtl run：SIM PASS）
+#  网表取 $(SYN_DIR)/<模块>/<模块>_netlist.v（缺失自动先 make syn <模块>）；
+#  单元行为模型由 yosys 从 liberty 现场生成，落 $(NETLIST_DIR)/cells_sim.v
+#  （仓库不存单元模型副本）。WAVE=1 执行时落 VCD 于
+#  $(NETLIST_DIR)/<模块>/tb_<模块>.vcd（门级波形，将来供顶层 power 使用）。
+# ===========================================================================
+NETLIST_DIR := $(TMP)/netlist
+
+netlist:
+	@if [ -z "$(MOD)" ]; then \
+	  echo "用法：make netlist <模块>，模块 ∈ { $(MODULES) }（当前未指定模块）"; exit 1; \
+	elif [ $(words $(MOD)) -gt 1 ]; then \
+	  echo "一次只能仿真一个模块，收到：$(MOD)"; exit 1; \
+	else \
+	  $(PDK_CHECK); \
+	  $(YOSYS_FIND); \
+	  if [ ! -f $(CURDIR)/$(SYN_DIR)/$(MOD)/$(MOD)_netlist.v ]; then \
+	    echo "未检测到网表，先综合：make syn $(MOD)"; \
+	    $(MAKE) --no-print-directory syn $(MOD) || exit 1; \
+	  fi; \
+	  mkdir -p $(NETLIST_DIR); \
+	  if [ ! -f $(NETLIST_DIR)/cells_sim.v ]; then \
+	    echo "== 生成单元行为模型（liberty → cells_sim.v）=="; \
+	    $$YBIN -p "read_liberty -ignore_miss_func -ignore_miss_dir -ignore_miss_data_latch $(NANGATE_LIB); write_verilog $(CURDIR)/$(NETLIST_DIR)/cells_sim.v" || exit 1; \
+	  fi; \
+	  mkdir -p $(NETLIST_DIR)/$(MOD) && cd $(NETLIST_DIR)/$(MOD) && \
+	  { . /opt/synopsys/snop18.sh >/dev/null 2>&1 || true; } && \
+	  { command -v $(VCS) >/dev/null 2>&1 || { echo "未找到 vcs：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; } && \
+	  $(VCS) $(VCSFLAGS) -top tb_$(MOD) -o simv -Mdir=csrc \
+	    -CFLAGS "-std=gnu99 -I$(CURDIR)/$(SIM_DIR) -ffp-contract=off" \
+	    $(CURDIR)/$(SYN_DIR)/$(MOD)/$(MOD)_netlist.v \
+	    $(CURDIR)/$(NETLIST_DIR)/cells_sim.v \
+	    $(CURDIR)/$(MOD)/tb/tb_$(MOD).sv \
+	    $(addprefix $(CURDIR)/,$(DPI_SRC) $(CORE_SRCS)) || exit 1; \
+	  if [ -n "$(RUN_IT)" ]; then \
+	    ./simv $(if $(WAVE),+vcd=tb_$(MOD).vcd) | tee simv.out; \
+	    grep -q "SIM PASS" $(CURDIR)/$(NETLIST_DIR)/$(MOD)/simv.out; \
+	  fi; \
 	fi
 
 # ===========================================================================
@@ -329,6 +380,8 @@ help:
 	@echo "  rtl run <模块>   RTL 仿真执行（VCS，testbench 为 <模块>/tb/tb_<模块>.sv）"
 	@echo "  syn <模块>       门级综合（Yosys + nangate45），产物落 tmp/syn/<模块>/"
 	@echo "  area <模块>      打印综合报告中的面积（单元数与芯片面积）"
+	@echo "  netlist <模块>   门级仿真编译（综合后网表 + 单元行为模型 + 原 testbench）"
+	@echo "  netlist run <模块> 门级仿真执行（对 C 参考模型事务级比对）"
 	@echo "  clean            清空 tmp/"
 	@echo ""
 	@echo "预留（未实现）："
