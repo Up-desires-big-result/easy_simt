@@ -9,8 +9,9 @@
 #    tmp/       一切编译 / 综合 / 仿真的中间产物与报告，与 top 同级；
 #               make clean 清空整个 tmp/（此目录不入库）
 #
-#  已实现：C 事务级模型（top/cmodel/）编译与黄金回归；内核镜像自 top/kernel/*.cu 全链生成
-#  预留  ：RTL 仿真、门级综合（Yosys + nangate45）、C 模型经 DPI-C 接入 SV testbench
+#  已实现：C 事务级模型（top/cmodel/）编译与黄金回归；内核镜像自 top/kernel/*.cu 全链生成；
+#          RTL 仿真与 DPI-C 协同仿真（VCS，make rtl/cosim <模块>）
+#  预留  ：门级综合（Yosys + nangate45）
 #
 #  内核单一源：top/kernel 只存 CUDA 源码 easy_simt_kernel.cu；
 #    .ptx/.hex/.json/.lst 一律由本 Makefile 现场生成到 tmp/kernel/，不入库：
@@ -18,9 +19,10 @@
 #      python3 top/assembler/easy_simt_assembler.py  .ptx -> .hex/.json/.lst
 #
 #  分层约定（为将来 DPI 接入预留）：
-#    top/cmodel/*.c（不含 main.c）  -> tmp/build/sim/libeasy_simt_sim.a  模型库
+#    top/cmodel/*.c（不含 main.c、dpi_ref.c） -> tmp/build/sim/libeasy_simt_sim.a  模型库
 #    top/cmodel/main.c              -> tmp/build/sim/easy_simt_sim        独立回归前端
-#    top/cmodel/dpi_ref.c（将来）   -> tmp/dpi/*.so                       SV TB 参考模型前端（预留）
+#    top/cmodel/dpi_ref.c           -> SV testbench 的 DPI-C 参考模型前端（随 simv 编译；
+#                                       make dpi 另作独立 .so 编译校验）
 #
 #  常用命令（均在仓库根执行）：
 #    make / make sim        编译模型库 + 回归可执行（-> tmp/build/sim/）
@@ -29,6 +31,9 @@
 #    make sim_dbg           ASan/UBSan 调试编译（-> tmp/build/sim_dbg/）
 #    make sim_run_dbg       调试版回归
 #    make syn <模块>        门级综合（预留：需 <模块>/rtl/ 下 RTL 与 $PDK_ROOT/nangate45）
+#    make rtl <模块>        RTL 仿真（VCS；testbench 为 <模块>/tb/tb_<模块>.sv，WAVE=1 出 VCD）
+#    make cosim <模块>      同 rtl（参考模型经 DPI-C 随 simv 一并编译，语义别名）
+#    make wave <模块>       波形查看提示
 #    make help              查看全部目标（含预留）
 #    make clean             清空 tmp/
 #
@@ -75,7 +80,7 @@ WARPS  ?= 4
 LANES  ?= 8
 MEMLAT ?= 20
 
-CORE_SRCS := $(filter-out $(SIM_DIR)/main.c,$(wildcard $(SIM_DIR)/*.c))
+CORE_SRCS := $(filter-out $(SIM_DIR)/main.c $(SIM_DIR)/dpi_ref.c,$(wildcard $(SIM_DIR)/*.c))
 CORE_OBJS := $(patsubst $(SIM_DIR)/%.c,$(BUILD)/%.o,$(CORE_SRCS))
 DBG_OBJS  := $(patsubst $(SIM_DIR)/%.c,$(BUILD_DBG)/%.o,$(CORE_SRCS))
 LIB       := $(BUILD)/libeasy_simt_sim.a
@@ -154,8 +159,7 @@ sim_run_dbg: $(BIN_DBG) $(KERNEL_HEX)
 	./$(BIN_DBG) $(KERNEL) --n $(N) --warps $(WARPS) --lanes $(LANES) --memlat $(MEMLAT)
 
 # ===========================================================================
-#  【预留】门级综合 / RTL 仿真 / 波形 / DPI / 协同仿真
-#  当前调用会明确报未实现；实现时产物统一落 tmp/ 下。
+#  【预留】门级综合（实现时产物统一落 tmp/ 下）
 # ===========================================================================
 
 # 门级综合：make syn <模块>，读 <模块>/rtl/*.v(.sv)，经 Yosys + nangate45 综合，
@@ -171,29 +175,63 @@ syn:
 	  exit 1; \
 	fi
 
-# RTL 仿真：iverilog/vvp（或厂商工具）编译运行，入口预计为 <模块>/tb/ 下 testbench
+# ===========================================================================
+#  RTL 仿真与 DPI-C 协同仿真（VCS）
+#    make rtl <模块> / make cosim <模块>（二者等价）：
+#      RTL 取 <模块>/rtl/*.sv，testbench 取 <模块>/tb/tb_<模块>.sv（顶层模块名
+#      tb_<模块>）；C 参考模型 top/cmodel/dpi_ref.c（DPI 前端）与模型源文件
+#      （不含 main.c）随 simv 一并编译。产物落 $(RTL_DIR)/<模块>/（.gitignore）。
+#      以运行日志中出现 "SIM PASS" 为通过判据。
+#    WAVE=1 运行时落 VCD 于 $(RTL_DIR)/<模块>/tb_<模块>.vcd。
+#    VCS 环境由 recipe 内 source /opt/synopsys/snop18.sh 提供（license 同该脚本）。
+# ===========================================================================
+VCS      ?= vcs
+VCSFLAGS ?= -full64 -sverilog -timescale=1ns/1ps -debug_access+all \
+            -cpp g++-4.8 -cc gcc-4.8 -LDFLAGS -Wl,--no-as-needed +vcs+lic+wait
+RTL_DIR  := $(TMP)/rtl
+
+# C 参考模型 DPI 前端（第二前端，与模型库同源）
+DPI_SRC  := $(SIM_DIR)/dpi_ref.c
+
 rtl:
-	@echo "[预留] rtl：RTL 仿真编译+运行，未实现"
-	@exit 1
+	@if [ -z "$(MOD)" ]; then \
+	  echo "用法：make rtl <模块>，模块 ∈ { $(MODULES) }（当前未指定模块）"; exit 1; \
+	elif [ $(words $(MOD)) -gt 1 ]; then \
+	  echo "一次只能仿真一个模块，收到：$(MOD)"; exit 1; \
+	else \
+	  mkdir -p $(RTL_DIR)/$(MOD) && cd $(RTL_DIR)/$(MOD) && \
+	  { . /opt/synopsys/snop18.sh >/dev/null 2>&1 || true; } && \
+	  { command -v $(VCS) >/dev/null 2>&1 || { echo "未找到 vcs：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; } && \
+	  ls $(CURDIR)/$(MOD)/rtl/*.sv >/dev/null 2>&1 || { echo "$(MOD)/rtl/ 下无 RTL"; exit 1; }; \
+	  $(VCS) $(VCSFLAGS) -top tb_$(MOD) -o simv -Mdir=csrc \
+	    -CFLAGS "-std=gnu99 -I$(CURDIR)/$(SIM_DIR) -ffp-contract=off" \
+	    $(CURDIR)/$(MOD)/rtl/*.sv $(CURDIR)/$(MOD)/tb/tb_$(MOD).sv \
+	    $(addprefix $(CURDIR)/,$(DPI_SRC) $(CORE_SRCS)) \
+	  && ./simv $(if $(WAVE),+vcd=tb_$(MOD).vcd) | tee simv.out; \
+	  grep -q "SIM PASS" $(RTL_DIR)/$(MOD)/simv.out; \
+	fi
+
+# cosim：与 rtl 等价（参考模型经 DPI-C 随 simv 编译），保留预留目标名
+cosim:
+	@$(MAKE) --no-print-directory rtl $(MOD)
 
 rtl_clean:
-	@echo "[预留] rtl_clean：清理 RTL 仿真产物，未实现"
-	@exit 1
+	rm -rf $(RTL_DIR)
 
-# 波形
 wave:
-	@echo "[预留] wave：生成/查看 RTL 仿真波形，未实现"
-	@exit 1
+	@if [ -z "$(MOD)" ]; then \
+	  echo "用法：make wave <模块>；运行时加 WAVE=1 出波形：make cosim <模块> WAVE=1"; exit 1; \
+	else \
+	  echo "波形：make cosim $(MOD) WAVE=1，VCD 落 $(RTL_DIR)/$(MOD)/tb_$(MOD).vcd（GTKWave/Verdi 查看）"; \
+	fi
 
-# C 模型编译为 DPI-C 参考模型共享对象，供 SystemVerilog testbench 调用
-dpi:
-	@echo "[预留] dpi：模型库编译为 DPI-C .so（第二前端 $(SIM_DIR)/dpi_ref.c），未实现"
-	@exit 1
+# DPI 前端独立编译校验（.so）；VCS 路线下参考模型随 simv 编译，不依赖本产物
+$(TMP)/dpi:
+	mkdir -p $(TMP)/dpi
 
-# RTL 与 C 参考模型对比回归（依赖 rtl + dpi）
-cosim:
-	@echo "[预留] cosim：RTL 与 C 参考模型对比回归，未实现"
-	@exit 1
+dpi: $(DPI_SRC) $(CORE_SRCS) $(SIM_DIR)/sim_common.h | $(TMP)/dpi
+	$(CC) $(CFLAGS) -O2 -fPIC -shared -I$(SIM_DIR) -o $(TMP)/dpi/libeasy_simt_ref.so \
+	  $(DPI_SRC) $(CORE_SRCS) $(LDLIBS)
 
 # ===========================================================================
 
@@ -209,11 +247,12 @@ help:
 	@echo "  sim_run        黄金回归（先 kernel 后回归）KERNEL=$(KERNEL) N=$(N) WARPS=$(WARPS) LANES=$(LANES) MEMLAT=$(MEMLAT)"
 	@echo "  sim_dbg        ASan/UBSan 编译"
 	@echo "  sim_run_dbg    调试版回归"
+	@echo "  rtl <模块>     RTL 仿真（VCS，testbench 为 <模块>/tb/tb_<模块>.sv）"
+	@echo "  cosim <模块>   同 rtl（C 参考模型经 DPI-C 随 simv 编译）"
+	@echo "  wave <模块>    波形提示（运行加 WAVE=1 出 VCD）"
+	@echo "  dpi            C 参考模型 DPI 前端独立编译校验（.so）"
+	@echo "  rtl_clean      清理 RTL 仿真产物（tmp/rtl/）"
 	@echo "  clean          清空 tmp/"
 	@echo ""
 	@echo "预留（未实现）："
 	@echo "  syn <模块>     门级综合（Yosys + nangate45），模块 ∈ { $(MODULES) }"
-	@echo "  rtl / rtl_clean  RTL 仿真（iverilog/vvp 或厂商工具）"
-	@echo "  wave             波形"
-	@echo "  dpi              C 模型编为 DPI-C 参考模型 .so"
-	@echo "  cosim            RTL 与参考模型对比回归"
