@@ -9,8 +9,13 @@
 #    tmp/       一切编译 / 综合 / 仿真的中间产物与报告，与 top 同级；
 #               make clean 清空整个 tmp/（此目录不入库）
 #
-#  已实现：C 事务级模型（top/cmodel/）编译与黄金回归
+#  已实现：C 事务级模型（top/cmodel/）编译与黄金回归；内核镜像自 top/kernel/*.cu 全链生成
 #  预留  ：RTL 仿真、门级综合（Yosys + nangate45）、C 模型经 DPI-C 接入 SV testbench
+#
+#  内核单一源：top/kernel 只存 CUDA 源码 easy_simt_kernel.cu；
+#    .ptx/.hex/.json/.lst 一律由本 Makefile 现场生成到 tmp/kernel/，不入库：
+#      nvcc -ptx -arch=$(PTX_ARCH) -fmad=false  .cu -> .ptx
+#      python3 top/assembler/easy_simt_assembler.py  .ptx -> .hex/.json/.lst
 #
 #  分层约定（为将来 DPI 接入预留）：
 #    top/cmodel/*.c（不含 main.c）  -> tmp/build/sim/libeasy_simt_sim.a  模型库
@@ -19,15 +24,14 @@
 #
 #  常用命令（均在仓库根执行）：
 #    make / make sim        编译模型库 + 回归可执行（-> tmp/build/sim/）
-#    make sim_run           黄金回归（默认 N=1000 WARPS=4 LANES=8 MEMLAT=20）
+#    make kernel            自 top/kernel/*.cu 生成内核镜像到 tmp/kernel/（.ptx/.hex/.json/.lst）
+#    make sim_run           黄金回归（依赖内核镜像，默认 N=1000 WARPS=4 LANES=8 MEMLAT=20）
 #    make sim_dbg           ASan/UBSan 调试编译（-> tmp/build/sim_dbg/）
 #    make sim_run_dbg       调试版回归
 #    make syn <模块>        门级综合（预留：需 <模块>/rtl/ 下 RTL 与 $PDK_ROOT/nangate45）
 #    make help              查看全部目标（含预留）
 #    make clean             清空 tmp/
 #
-#  回归输入：kernel 镜像（top/kernel/easy_simt_kernel.hex），
-#  BRT 由回归程序自同名 .json 自动装载。
 # =============================================================================
 
 CC     ?= gcc
@@ -50,11 +54,22 @@ BUILD_DBG := $(TMP)/build/sim_dbg
 # 综合产物：每模块落 $(SYN_DIR)/<模块>/（综合预留）
 SYN_DIR   := $(TMP)/syn
 
+# ---- 内核镜像生成链（.cu 单一源 -> ptx -> hex/json/lst，全部落 tmp/kernel）----
+KERNEL_DIR := $(TMP)/kernel
+KERNEL_SRC := $(TOP)/kernel/easy_simt_kernel.cu
+KERNEL_PTX := $(KERNEL_DIR)/easy_simt_kernel.ptx
+KERNEL_HEX := $(KERNEL_DIR)/easy_simt_kernel.hex
+ASSEMBLER  := $(TOP)/assembler/easy_simt_assembler.py
+NVCC     ?= nvcc
+PY       ?= python3
+# PTX 目标架构（与 ma_spec 硬件口径一致：.target sm_70）
+PTX_ARCH ?= sm_70
+
 # ---- 硬件子模块清单（与 ma_spec §1.4 一致；每个模块目录镜像 docs/rtl/tb）----
 MODULES := sf ws bs ialu falu lsu icache l1sm memif rf
 
 # 黄金回归参数（ma_spec §1.7 easy_simt 硬件口径，与模型编译参数一致，可覆盖）
-KERNEL ?= $(TOP)/kernel/easy_simt_kernel.hex
+KERNEL ?= $(KERNEL_HEX)
 N      ?= 1000
 WARPS  ?= 4
 LANES  ?= 8
@@ -70,7 +85,7 @@ BIN_DBG   := $(BUILD_DBG)/easy_simt_sim_dbg
 # 综合对象：make syn bs 中出现在目标里的模块名即为 $(MOD)
 MOD := $(filter $(MODULES),$(MAKECMDGOALS))
 
-.PHONY: all sim sim_run sim_dbg sim_run_dbg clean help \
+.PHONY: all sim kernel sim_run sim_dbg sim_run_dbg clean help \
         syn rtl rtl_clean wave dpi cosim \
         $(MODULES)
 
@@ -99,7 +114,25 @@ $(BIN): $(BUILD)/main.o $(LIB)
 $(BUILD):
 	mkdir -p $@
 
-sim_run: $(BIN)
+# ===========================================================================
+#  内核镜像生成（.cu 单一源 -> ptx -> hex/json/lst，全部落 tmp/kernel/，不入库）
+#  依赖 nvcc（CUDA）与 python3；产物随 tmp/ 一并被 make clean 清空。
+# ===========================================================================
+kernel: $(KERNEL_HEX)
+
+$(KERNEL_DIR):
+	mkdir -p $@
+
+$(KERNEL_PTX): $(KERNEL_SRC) | $(KERNEL_DIR)
+	$(NVCC) -ptx -arch=$(PTX_ARCH) -fmad=false $< -o $@
+
+# 汇编器一次写出 hex/json/lst，以 hex 为代表目标
+$(KERNEL_HEX): $(KERNEL_PTX) $(ASSEMBLER) | $(KERNEL_DIR)
+	$(PY) $(ASSEMBLER) $(KERNEL_PTX) -o $(KERNEL_DIR)
+
+# ===========================================================================
+
+sim_run: $(BIN) $(KERNEL_HEX)
 	./$(BIN) $(KERNEL) --n $(N) --warps $(WARPS) --lanes $(LANES) --memlat $(MEMLAT)
 
 # ---- 调试（ASan + UBSan）----
@@ -117,7 +150,7 @@ $(BIN_DBG): $(DBG_OBJS) $(BUILD_DBG)/main.o
 $(BUILD_DBG):
 	mkdir -p $@
 
-sim_run_dbg: $(BIN_DBG)
+sim_run_dbg: $(BIN_DBG) $(KERNEL_HEX)
 	./$(BIN_DBG) $(KERNEL) --n $(N) --warps $(WARPS) --lanes $(LANES) --memlat $(MEMLAT)
 
 # ===========================================================================
@@ -172,7 +205,8 @@ help:
 	@echo ""
 	@echo "已实现："
 	@echo "  sim / all      编译模型库 + 回归可执行 ($(BIN))"
-	@echo "  sim_run        黄金回归  KERNEL=$(KERNEL) N=$(N) WARPS=$(WARPS) LANES=$(LANES) MEMLAT=$(MEMLAT)"
+	@echo "  kernel         自 $(KERNEL_SRC) 生成内核镜像到 $(KERNEL_DIR)/ (ptx/hex/json/lst)"
+	@echo "  sim_run        黄金回归（先 kernel 后回归）KERNEL=$(KERNEL) N=$(N) WARPS=$(WARPS) LANES=$(LANES) MEMLAT=$(MEMLAT)"
 	@echo "  sim_dbg        ASan/UBSan 编译"
 	@echo "  sim_run_dbg    调试版回归"
 	@echo "  clean          清空 tmp/"
