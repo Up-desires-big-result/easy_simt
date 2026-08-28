@@ -240,9 +240,10 @@ verdi:
 	  { . /opt/synopsys/snop18.sh >/dev/null 2>&1 || true; }; \
 	  command -v verdi    >/dev/null 2>&1 || { echo "未找到 verdi：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; \
 	  command -v vcd2fsdb >/dev/null 2>&1 || { echo "未找到 vcd2fsdb：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; \
-	  vcd2fsdb $(RTL_DIR)/$(MOD)/tb_$(MOD).vcd -o $(RTL_DIR)/$(MOD)/tb_$(MOD).fsdb || exit 1; \
+	  cd $(RTL_DIR)/$(MOD) && \
+	  vcd2fsdb tb_$(MOD).vcd -o tb_$(MOD).fsdb || exit 1; \
 	  echo "拉起 Verdi：波形 $(RTL_DIR)/$(MOD)/tb_$(MOD).fsdb（日志：$(RTL_DIR)/$(MOD)/verdi.log）"; \
-	  cd $(RTL_DIR)/$(MOD) && nohup verdi -ssf tb_$(MOD).fsdb >verdi.log 2>&1 & \
+	  nohup verdi -ssf tb_$(MOD).fsdb >verdi.log 2>&1 & \
 	fi
 
 # DPI 前端独立编译校验（.so）；VCS 路线下参考模型随 simv 编译，不依赖本产物
