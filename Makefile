@@ -10,8 +10,8 @@
 #               make clean 清空整个 tmp/（此目录不入库）
 #
 #  已实现：C 事务级模型（top/cmodel/）编译与黄金回归；内核镜像自 top/kernel/*.cu 全链生成；
-#          RTL 编译与仿真执行（VCS，make rtl [run] <模块>）
-#  预留  ：门级综合（Yosys + nangate45）、功耗（网表+波形，顶层）、性能（顶层 kernel 完成 cycle 数）
+#          RTL 编译与仿真执行（VCS，make rtl [run] <模块>）；门级综合与面积（Yosys + nangate45）
+#  预留  ：功耗（网表+波形，顶层）、性能（顶层 kernel 完成 cycle 数）
 #
 #  内核单一源：top/kernel 只存 CUDA 源码 easy_simt_kernel.cu；
 #    .ptx/.hex/.json/.lst 一律由本 Makefile 现场生成到 tmp/kernel/，不入库：
@@ -30,9 +30,12 @@
 #    make kernel            自 top/kernel/*.cu 生成内核镜像到 tmp/kernel/（.ptx/.hex/.json/.lst）
 #    make rtl <模块>        RTL 编译（VCS；testbench 为 <模块>/tb/tb_<模块>.sv）
 #    make rtl run <模块>    RTL 仿真执行（WAVE=1 出 VCD；参考模型经 DPI-C 随 simv 编译）
+#    make syn <模块>        门级综合（Yosys + nangate45，需 PDK_ROOT，产物落 tmp/syn/<模块>/）
+#    make area <模块>       打印综合报告中的面积
 #    make wave <模块>       波形查看提示
 #    make help              查看全部目标（含预留）
 #    make clean             清空 tmp/
+#    预留：make power（顶层功耗）/ make perf（顶层 kernel 完成 cycle 数）
 #
 # =============================================================================
 
@@ -90,7 +93,7 @@ MOD := $(filter $(MODULES),$(MAKECMDGOALS))
 RUN_IT := $(filter run,$(MAKECMDGOALS))
 
 .PHONY: all sim cmodel kernel sim_run sim_dbg sim_run_dbg clean help \
-        syn power perf rtl rtl_clean wave verdi dpi cosim \
+        syn area power perf rtl rtl_clean wave verdi dpi cosim \
         $(MODULES) run
 
 # 允许模块名单独作为目标出现（供 $(MOD) 抓取），本身不做任何事
@@ -165,21 +168,57 @@ sim_run_dbg: $(BIN_DBG) $(KERNEL_HEX)
 	./$(BIN_DBG) $(KERNEL) --n $(N) --warps $(WARPS) --lanes $(LANES) --memlat $(MEMLAT)
 
 # ===========================================================================
-#  【预留】门级综合 / 功耗 / 性能（实现时产物统一落 tmp/ 下）
+#  门级综合（Yosys + nangate45）与面积：
+#    make syn <模块>   综合，产物落 $(SYN_DIR)/<模块>/（网表 / stat.rpt / syn.log）
+#    make area <模块>  打印综合报告中的面积（先综合）
+#  路径与单元名单约定见 README「工艺库（nangate45）」：库取
+#    $(PDK_ROOT)/nangate45/lib/NangateOpenCellLibrary_typical.lib（PDK_ROOT 自行 export）。
 # ===========================================================================
+YOSYS ?= yosys
+NANGATE_LIB = $(PDK_ROOT)/nangate45/lib/NangateOpenCellLibrary_typical.lib
 
-# 门级综合：make syn <模块>，读 <模块>/rtl/*.v(.sv)，经 Yosys + nangate45 综合，
-# 网表与面积/时序报告落 $(SYN_DIR)/<模块>/。工艺库见 README「工艺库（nangate45）」。
 syn:
 	@if [ -z "$(MOD)" ]; then \
 	  echo "用法：make syn <模块>，模块 ∈ { $(MODULES) }（当前未指定模块）"; exit 1; \
 	elif [ $(words $(MOD)) -gt 1 ]; then \
 	  echo "一次只能综合一个模块，收到：$(MOD)"; exit 1; \
 	else \
-	  echo "[预留] syn $(MOD)：门级综合需 $(MOD)/rtl/ 下的 RTL 与 nangate45 工艺库（见 README），尚未实现。"; \
-	  echo "        实现后：Yosys 读 $(MOD)/rtl/*.v(.sv) 综合，产物落 $(SYN_DIR)/$(MOD)/。"; \
-	  exit 1; \
+	  if [ -z "$(PDK_ROOT)" ]; then \
+	    echo "PDK_ROOT 未设置（见 README「工艺库（nangate45）」）"; exit 1; \
+	  fi; \
+	  [ -f "$(NANGATE_LIB)" ] || { echo "未找到标准单元库：$(NANGATE_LIB)"; exit 1; }; \
+	  if command -v $(YOSYS) >/dev/null 2>&1; then YBIN="$(YOSYS)"; \
+	  elif [ -x "$(PDK_ROOT)/oss-cad-suite/bin/yosys" ]; then YBIN="$(PDK_ROOT)/oss-cad-suite/bin/yosys"; \
+	  else echo "未找到 yosys（PATH 或 $(PDK_ROOT)/oss-cad-suite/bin/yosys）"; exit 1; fi; \
+	  RTL_FILES="$$(ls $(CURDIR)/$(MOD)/rtl/*.sv 2>/dev/null)"; \
+	  [ -n "$$RTL_FILES" ] || { echo "$(MOD)/rtl/ 下无 RTL"; exit 1; }; \
+	  DONT_USE=$$(sed -n 's/^export DONT_USE_CELLS = //p' $(PDK_ROOT)/nangate45/config.mk); \
+	  DU_FLAGS=""; for c in $$DONT_USE; do DU_FLAGS="$$DU_FLAGS -dont_use $$c"; done; \
+	  mkdir -p $(SYN_DIR)/$(MOD); \
+	  { echo "read_verilog -sv $$RTL_FILES"; \
+	    echo "hierarchy -top $(MOD)"; \
+	    echo "proc; opt; memory; opt; techmap; opt"; \
+	    echo "dfflibmap -liberty $(NANGATE_LIB) $$DU_FLAGS"; \
+	    echo "abc -liberty $(NANGATE_LIB) $$DU_FLAGS"; \
+	    echo "opt; clean"; \
+	    echo "tee -o $(CURDIR)/$(SYN_DIR)/$(MOD)/stat.rpt stat -liberty $(NANGATE_LIB)"; \
+	    echo "write_verilog $(CURDIR)/$(SYN_DIR)/$(MOD)/$(MOD)_netlist.v"; \
+	  } > $(SYN_DIR)/$(MOD)/syn.ys; \
+	  echo "== syn $(MOD)：yosys + nangate45 =="; \
+	  $$YBIN -s $(SYN_DIR)/$(MOD)/syn.ys -l $(SYN_DIR)/$(MOD)/syn.log || exit 1; \
+	  echo "综合完成：网表与报告落 $(SYN_DIR)/$(MOD)/（$(MOD)_netlist.v / stat.rpt / syn.log）"; \
 	fi
+
+# 面积：打印综合报告（stat -liberty）中的单元数与芯片面积
+area: syn
+	@if [ -n "$(MOD)" ] && [ $(words $(MOD)) -eq 1 ] && [ -s $(SYN_DIR)/$(MOD)/stat.rpt ]; then \
+	  echo "== area $(MOD)（nangate45 typical，面积单位 µm²）=="; \
+	  grep -E 'cells$$|Chip area for|sequential elements' $(SYN_DIR)/$(MOD)/stat.rpt; \
+	fi
+
+# ===========================================================================
+#  【预留】功耗 / 性能（实现时产物统一落 tmp/ 下）
+# ===========================================================================
 
 # 功耗：make power，只跑顶层，需综合后门级网表 + 仿真波形（VCD/FSDB）
 power:
@@ -288,10 +327,11 @@ help:
 	@echo "  kernel           自 $(KERNEL_SRC) 生成内核镜像到 $(KERNEL_DIR)/ (ptx/hex/json/lst)"
 	@echo "  rtl <模块>       RTL 编译（VCS，testbench 为 <模块>/tb/tb_<模块>.sv）"
 	@echo "  rtl run <模块>   RTL 仿真执行（VCS，testbench 为 <模块>/tb/tb_<模块>.sv）"
+	@echo "  syn <模块>       门级综合（Yosys + nangate45），产物落 tmp/syn/<模块>/"
+	@echo "  area <模块>      打印综合报告中的面积（单元数与芯片面积）"
 	@echo "  wave <模块>      波形提示（运行加 WAVE=1 出 VCD）"
 	@echo "  clean            清空 tmp/"
 	@echo ""
 	@echo "预留（未实现）："
-	@echo "  syn <模块>       门级综合（Yosys + nangate45），模块 ∈ { $(MODULES) }"
 	@echo "  power            网表+波形跑功耗（顶层）"
 	@echo "  perf             kernel 跑完的 cycle 数（顶层，第一个块下发到所有块结束）"
