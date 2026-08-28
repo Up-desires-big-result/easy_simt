@@ -10,8 +10,8 @@
 #               make clean 清空整个 tmp/（此目录不入库）
 #
 #  已实现：C 事务级模型（top/cmodel/）编译与黄金回归；内核镜像自 top/kernel/*.cu 全链生成；
-#          RTL 仿真与 DPI-C 协同仿真（VCS，make rtl/cosim <模块>）
-#  预留  ：门级综合（Yosys + nangate45）
+#          RTL 编译与仿真执行（VCS，make rtl [run] <模块>）
+#  预留  ：门级综合（Yosys + nangate45）、功耗（网表+波形）
 #
 #  内核单一源：top/kernel 只存 CUDA 源码 easy_simt_kernel.cu；
 #    .ptx/.hex/.json/.lst 一律由本 Makefile 现场生成到 tmp/kernel/，不入库：
@@ -25,16 +25,12 @@
 #                                       make dpi 另作独立 .so 编译校验）
 #
 #  常用命令（均在仓库根执行）：
-#    make / make sim        编译模型库 + 回归可执行（-> tmp/build/sim/）
+#    make cmodel            编译模型库 + 回归可执行（-> tmp/build/sim/）
+#    make cmodel run        编译并执行模型黄金回归（默认 N=1000 WARPS=4 LANES=8 MEMLAT=20）
 #    make kernel            自 top/kernel/*.cu 生成内核镜像到 tmp/kernel/（.ptx/.hex/.json/.lst）
-#    make sim_run           黄金回归（依赖内核镜像，默认 N=1000 WARPS=4 LANES=8 MEMLAT=20）
-#    make sim_dbg           ASan/UBSan 调试编译（-> tmp/build/sim_dbg/）
-#    make sim_run_dbg       调试版回归
-#    make syn <模块>        门级综合（预留：需 <模块>/rtl/ 下 RTL 与 $PDK_ROOT/nangate45）
-#    make rtl <模块>        RTL 仿真（VCS；testbench 为 <模块>/tb/tb_<模块>.sv，WAVE=1 出 VCD）
-#    make cosim <模块>      同 rtl（参考模型经 DPI-C 随 simv 一并编译，语义别名）
+#    make rtl <模块>        RTL 编译（VCS；testbench 为 <模块>/tb/tb_<模块>.sv）
+#    make rtl run <模块>    RTL 仿真执行（WAVE=1 出 VCD；参考模型经 DPI-C 随 simv 编译）
 #    make wave <模块>       波形查看提示
-#    make verdi <模块>      VCD 转 FSDB 并拉起 nWave 波形浏览器（缺 VCD 自动生成）
 #    make help              查看全部目标（含预留）
 #    make clean             清空 tmp/
 #
@@ -90,13 +86,18 @@ BIN_DBG   := $(BUILD_DBG)/easy_simt_sim_dbg
 
 # 综合对象：make syn bs 中出现在目标里的模块名即为 $(MOD)
 MOD := $(filter $(MODULES),$(MAKECMDGOALS))
+# 子命令：make cmodel run / make rtl run bs 中的 run 仅为标记，命中则编译后继续执行
+RUN_IT := $(filter run,$(MAKECMDGOALS))
 
-.PHONY: all sim kernel sim_run sim_dbg sim_run_dbg clean help \
-        syn rtl rtl_clean wave verdi dpi cosim \
-        $(MODULES)
+.PHONY: all sim cmodel kernel sim_run sim_dbg sim_run_dbg clean help \
+        syn power rtl rtl_clean wave verdi dpi cosim \
+        $(MODULES) run
 
 # 允许模块名单独作为目标出现（供 $(MOD) 抓取），本身不做任何事
 $(MODULES): ;
+
+# run 作为 cmodel/rtl 的子命令出现（供 $(RUN_IT) 抓取），本身不做任何事
+run: ;
 
 all: sim
 
@@ -104,6 +105,10 @@ all: sim
 #  C 事务级模型（top/cmodel/）
 # ===========================================================================
 sim: $(BIN)
+
+# cmodel：sim 的别名；make cmodel run 编译后接着执行黄金回归
+cmodel: $(BIN)
+	@if [ -n "$(RUN_IT)" ]; then $(MAKE) --no-print-directory sim_run; fi
 
 $(LIB): $(CORE_OBJS)
 	$(AR) rcs $@ $^
@@ -160,7 +165,7 @@ sim_run_dbg: $(BIN_DBG) $(KERNEL_HEX)
 	./$(BIN_DBG) $(KERNEL) --n $(N) --warps $(WARPS) --lanes $(LANES) --memlat $(MEMLAT)
 
 # ===========================================================================
-#  【预留】门级综合（实现时产物统一落 tmp/ 下）
+#  【预留】门级综合 / 功耗（实现时产物统一落 tmp/ 下）
 # ===========================================================================
 
 # 门级综合：make syn <模块>，读 <模块>/rtl/*.v(.sv)，经 Yosys + nangate45 综合，
@@ -176,14 +181,26 @@ syn:
 	  exit 1; \
 	fi
 
+# 功耗：make power <模块>，需综合后门级网表 + 仿真波形（VCD/FSDB）
+power:
+	@if [ -z "$(MOD)" ]; then \
+	  echo "用法：make power <模块>，模块 ∈ { $(MODULES) }（当前未指定模块）"; exit 1; \
+	elif [ $(words $(MOD)) -gt 1 ]; then \
+	  echo "一次只能分析一个模块，收到：$(MOD)"; exit 1; \
+	else \
+	  echo "[预留] power $(MOD)：功耗需综合后门级网表（syn $(MOD)）与仿真波形（rtl run $(MOD) WAVE=1），尚未实现。"; \
+	  echo "        实现后：网表 + 波形跑功耗，产物落 $(TMP)/power/$(MOD)/。"; \
+	  exit 1; \
+	fi
+
 # ===========================================================================
-#  RTL 仿真与 DPI-C 协同仿真（VCS）
-#    make rtl <模块> / make cosim <模块>（二者等价）：
+#  RTL 编译与仿真执行（VCS）
+#    make rtl <模块>      仅编译；make rtl run <模块>  编译后执行
 #      RTL 取 <模块>/rtl/*.sv，testbench 取 <模块>/tb/tb_<模块>.sv（顶层模块名
 #      tb_<模块>）；C 参考模型 top/cmodel/dpi_ref.c（DPI 前端）与模型源文件
 #      （不含 main.c）随 simv 一并编译。产物落 $(RTL_DIR)/<模块>/（.gitignore）。
-#      以运行日志中出现 "SIM PASS" 为通过判据。
-#    WAVE=1 运行时落 VCD 于 $(RTL_DIR)/<模块>/tb_<模块>.vcd。
+#      执行时以运行日志中出现 "SIM PASS" 为通过判据。
+#    WAVE=1 执行时落 VCD 于 $(RTL_DIR)/<模块>/tb_<模块>.vcd。
 #    VCS 环境由 recipe 内 source /opt/synopsys/snop18.sh 提供（license 同该脚本）。
 # ===========================================================================
 VCS      ?= vcs
@@ -207,23 +224,25 @@ rtl:
 	  $(VCS) $(VCSFLAGS) -top tb_$(MOD) -o simv -Mdir=csrc \
 	    -CFLAGS "-std=gnu99 -I$(CURDIR)/$(SIM_DIR) -ffp-contract=off" \
 	    $(CURDIR)/$(MOD)/rtl/*.sv $(CURDIR)/$(MOD)/tb/tb_$(MOD).sv \
-	    $(addprefix $(CURDIR)/,$(DPI_SRC) $(CORE_SRCS)) \
-	  && ./simv $(if $(WAVE),+vcd=tb_$(MOD).vcd) | tee simv.out; \
-	  grep -q "SIM PASS" $(CURDIR)/$(RTL_DIR)/$(MOD)/simv.out; \
+	    $(addprefix $(CURDIR)/,$(DPI_SRC) $(CORE_SRCS)) || exit 1; \
+	  if [ -n "$(RUN_IT)" ]; then \
+	    ./simv $(if $(WAVE),+vcd=tb_$(MOD).vcd) | tee simv.out; \
+	    grep -q "SIM PASS" $(CURDIR)/$(RTL_DIR)/$(MOD)/simv.out; \
+	  fi; \
 	fi
 
-# cosim：与 rtl 等价（参考模型经 DPI-C 随 simv 编译），保留预留目标名
+# cosim：保留旧目标名，等价于 make rtl run <模块>（编译并执行、比对参考模型）
 cosim:
-	@$(MAKE) --no-print-directory rtl $(MOD)
+	@$(MAKE) --no-print-directory rtl run $(MOD)
 
 rtl_clean:
 	rm -rf $(RTL_DIR)
 
 wave:
 	@if [ -z "$(MOD)" ]; then \
-	  echo "用法：make wave <模块>；运行时加 WAVE=1 出波形：make cosim <模块> WAVE=1"; exit 1; \
+	  echo "用法：make wave <模块>；执行时加 WAVE=1 出波形：make rtl run <模块> WAVE=1"; exit 1; \
 	else \
-	  echo "波形：make cosim $(MOD) WAVE=1，VCD 落 $(RTL_DIR)/$(MOD)/tb_$(MOD).vcd（GTKWave/Verdi 查看）"; \
+	  echo "波形：make rtl run $(MOD) WAVE=1，VCD 落 $(RTL_DIR)/$(MOD)/tb_$(MOD).vcd（GTKWave/Verdi 查看）"; \
 	fi
 
 # 波形查看：VCD 缺失先生成，转 FSDB 后拉起 nWave（独立波形浏览器，
@@ -235,8 +254,8 @@ verdi:
 	  echo "一次只能指定一个模块，收到：$(MOD)"; exit 1; \
 	else \
 	  if [ ! -f $(RTL_DIR)/$(MOD)/tb_$(MOD).vcd ]; then \
-	    echo "未检测到 $(RTL_DIR)/$(MOD)/tb_$(MOD).vcd，先生成：make rtl $(MOD) WAVE=1"; \
-	    $(MAKE) --no-print-directory rtl $(MOD) WAVE=1 || exit 1; \
+	    echo "未检测到 $(RTL_DIR)/$(MOD)/tb_$(MOD).vcd，先生成：make rtl run $(MOD) WAVE=1"; \
+	    $(MAKE) --no-print-directory rtl run $(MOD) WAVE=1 || exit 1; \
 	  fi; \
 	  { . /opt/synopsys/snop18.sh >/dev/null 2>&1 || true; }; \
 	  command -v nWave    >/dev/null 2>&1 || { echo "未找到 nWave：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; \
@@ -264,18 +283,14 @@ help:
 	@echo "easy_simt 仓库根 Makefile（命令均在仓库根执行；产物统一落 tmp/）"
 	@echo ""
 	@echo "已实现："
-	@echo "  sim / all      编译模型库 + 回归可执行 ($(BIN))"
-	@echo "  kernel         自 $(KERNEL_SRC) 生成内核镜像到 $(KERNEL_DIR)/ (ptx/hex/json/lst)"
-	@echo "  sim_run        黄金回归（先 kernel 后回归）KERNEL=$(KERNEL) N=$(N) WARPS=$(WARPS) LANES=$(LANES) MEMLAT=$(MEMLAT)"
-	@echo "  sim_dbg        ASan/UBSan 编译"
-	@echo "  sim_run_dbg    调试版回归"
-	@echo "  rtl <模块>     RTL 仿真（VCS，testbench 为 <模块>/tb/tb_<模块>.sv）"
-	@echo "  cosim <模块>   同 rtl（C 参考模型经 DPI-C 随 simv 编译）"
-	@echo "  wave <模块>    波形提示（运行加 WAVE=1 出 VCD）"
-	@echo "  verdi <模块>   VCD 转 FSDB 并拉起 nWave 波形浏览器（缺 VCD 自动生成）"
-	@echo "  dpi            C 参考模型 DPI 前端独立编译校验（.so）"
-	@echo "  rtl_clean      清理 RTL 仿真产物（tmp/rtl/）"
-	@echo "  clean          清空 tmp/"
+	@echo "  cmodel           编译模型库"
+	@echo "  cmodel run       编译并执行模型"
+	@echo "  kernel           自 $(KERNEL_SRC) 生成内核镜像到 $(KERNEL_DIR)/ (ptx/hex/json/lst)"
+	@echo "  rtl <模块>       RTL 编译（VCS，testbench 为 <模块>/tb/tb_<模块>.sv）"
+	@echo "  rtl run <模块>   RTL 仿真执行（VCS，testbench 为 <模块>/tb/tb_<模块>.sv）"
+	@echo "  wave <模块>      波形提示（运行加 WAVE=1 出 VCD）"
+	@echo "  clean            清空 tmp/"
 	@echo ""
 	@echo "预留（未实现）："
-	@echo "  syn <模块>     门级综合（Yosys + nangate45），模块 ∈ { $(MODULES) }"
+	@echo "  syn <模块>       门级综合（Yosys + nangate45），模块 ∈ { $(MODULES) }"
+	@echo "  power <模块>     网表+波形跑功耗"
