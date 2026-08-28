@@ -11,7 +11,7 @@
 #
 #  已实现：C 事务级模型（top/cmodel/）编译与黄金回归；内核镜像自 top/kernel/*.cu 全链生成；
 #          RTL 编译与仿真执行（VCS，make rtl [run] <模块>）
-#  预留  ：门级综合（Yosys + nangate45）、功耗（网表+波形）
+#  预留  ：门级综合（Yosys + nangate45）、功耗（网表+波形，顶层）、性能（顶层 kernel 完成 cycle 数）
 #
 #  内核单一源：top/kernel 只存 CUDA 源码 easy_simt_kernel.cu；
 #    .ptx/.hex/.json/.lst 一律由本 Makefile 现场生成到 tmp/kernel/，不入库：
@@ -90,7 +90,7 @@ MOD := $(filter $(MODULES),$(MAKECMDGOALS))
 RUN_IT := $(filter run,$(MAKECMDGOALS))
 
 .PHONY: all sim cmodel kernel sim_run sim_dbg sim_run_dbg clean help \
-        syn power rtl rtl_clean wave verdi dpi cosim \
+        syn power perf rtl rtl_clean wave verdi dpi cosim \
         $(MODULES) run
 
 # 允许模块名单独作为目标出现（供 $(MOD) 抓取），本身不做任何事
@@ -165,7 +165,7 @@ sim_run_dbg: $(BIN_DBG) $(KERNEL_HEX)
 	./$(BIN_DBG) $(KERNEL) --n $(N) --warps $(WARPS) --lanes $(LANES) --memlat $(MEMLAT)
 
 # ===========================================================================
-#  【预留】门级综合 / 功耗（实现时产物统一落 tmp/ 下）
+#  【预留】门级综合 / 功耗 / 性能（实现时产物统一落 tmp/ 下）
 # ===========================================================================
 
 # 门级综合：make syn <模块>，读 <模块>/rtl/*.v(.sv)，经 Yosys + nangate45 综合，
@@ -181,17 +181,17 @@ syn:
 	  exit 1; \
 	fi
 
-# 功耗：make power <模块>，需综合后门级网表 + 仿真波形（VCD/FSDB）
+# 功耗：make power，只跑顶层，需综合后门级网表 + 仿真波形（VCD/FSDB）
 power:
-	@if [ -z "$(MOD)" ]; then \
-	  echo "用法：make power <模块>，模块 ∈ { $(MODULES) }（当前未指定模块）"; exit 1; \
-	elif [ $(words $(MOD)) -gt 1 ]; then \
-	  echo "一次只能分析一个模块，收到：$(MOD)"; exit 1; \
-	else \
-	  echo "[预留] power $(MOD)：功耗需综合后门级网表（syn $(MOD)）与仿真波形（rtl run $(MOD) WAVE=1），尚未实现。"; \
-	  echo "        实现后：网表 + 波形跑功耗，产物落 $(TMP)/power/$(MOD)/。"; \
-	  exit 1; \
-	fi
+	@echo "[预留] power：功耗需顶层综合后门级网表（top）与仿真波形，尚未实现。"
+	@echo "        实现后：顶层网表 + 波形跑功耗，产物落 $(TMP)/power/。"
+	@exit 1
+
+# 性能：make perf，只跑顶层：从第一个块下发到所有块结束，即同一 kernel 跑完的 cycle 数
+perf:
+	@echo "[预留] perf：kernel 跑完的 cycle 数（第一个块下发到所有块结束），需顶层 rtl + tb，尚未实现。"
+	@echo "        实现后：顶层仿真统计完成 cycle 数，报告落 $(TMP)/perf/。"
+	@exit 1
 
 # ===========================================================================
 #  RTL 编译与仿真执行（VCS）
@@ -293,4 +293,5 @@ help:
 	@echo ""
 	@echo "预留（未实现）："
 	@echo "  syn <模块>       门级综合（Yosys + nangate45），模块 ∈ { $(MODULES) }"
-	@echo "  power <模块>     网表+波形跑功耗"
+	@echo "  power            网表+波形跑功耗（顶层）"
+	@echo "  perf             kernel 跑完的 cycle 数（顶层，第一个块下发到所有块结束）"
