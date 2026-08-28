@@ -34,4 +34,12 @@ fi
 
 unset _setup_dir _d _p _depth
 
-# （后续环境变量在此追加）
+# PDK_ROOT：nangate45 工艺库目录（仓库外，见 README「工艺库（nangate45）」）。
+# 未设置时自动探测 ~/pdk（要求其中含 nangate45/）；也可在 source 前自行
+# export PDK_ROOT 覆盖。
+if [ -z "$PDK_ROOT" ]; then
+    if [ -d "$HOME/pdk/nangate45" ]; then
+        export PDK_ROOT="$HOME/pdk"
+        echo "PDK_ROOT  = $PDK_ROOT（自动探测）"
+    fi
+fi
