@@ -33,11 +33,11 @@
 #    make kernel            自 top/kernel/*.cu 生成内核镜像到 tmp/kernel/（.ptx/.hex/.json/.lst）
 #    make rtl <模块>        RTL 编译（VCS；testbench 为 <模块>/tb/tb_<模块>.sv）
 #    make rtl run <模块>    RTL 仿真执行（WAVE=1 出 VCD；参考模型经 DPI-C 随 simv 编译）
-#    make rtl gui <模块>    RTL 仿真执行并看波形（tb 直出 FSDB，拉起 nWave）
+#    make rtl gui <模块>    RTL 仿真执行并看波形（tb 直出 FSDB，Verdi 连带设计打开波形）
 #    make syn <模块>        门级综合（Yosys + nangate45，需 PDK_ROOT，产物落 tmp/syn/<模块>/）
 #    make netlist <模块>    门级仿真编译（综合后网表 + 单元行为模型 + 原 testbench）
 #    make netlist run <模块> 门级仿真执行（对 C 参考模型事务级比对，WAVE=1 出门级 VCD）
-#    make netlist gui <模块> 门级仿真执行并看波形（tb 直出 FSDB，拉起 nWave）
+#    make netlist gui <模块> 门级仿真执行并看波形（tb 直出 FSDB，Verdi 连带设计打开波形）
 #    make help              查看全部目标（含预留）
 #    make clean             清空 tmp/
 #    预留（均只跑顶层）：make area（顶层综合面积）/ make wave（门级仿真波形，供 power 使用）/
@@ -91,7 +91,7 @@ MOD := $(filter $(MODULES),$(MAKECMDGOALS))
 # 子命令：make cmodel run / make rtl run bs 中的 run 仅为标记，命中则编译后继续执行
 RUN_IT := $(filter run,$(MAKECMDGOALS))
 # 子命令：make rtl gui bs / make netlist gui bs 中的 gui：执行仿真（tb 直出
-# FSDB）并拉起波形浏览器
+# FSDB）并拉起 Verdi（生成设计 filelist，连带设计打开波形）
 GUI_IT := $(filter gui,$(MAKECMDGOALS))
 
 .PHONY: all cmodel kernel sim_run clean help \
@@ -156,7 +156,8 @@ $(KERNEL_HEX): $(KERNEL_PTX) $(ASSEMBLER) | $(KERNEL_DIR)
 #  RTL 编译与仿真执行（VCS）
 #    make rtl <模块>       仅编译
 #    make rtl run <模块>   编译后执行（WAVE=1 出 VCD）
-#    make rtl gui <模块>   编译后执行（tb 直出 FSDB）并拉起 nWave
+#    make rtl gui <模块>   编译后执行（tb 直出 FSDB）并拉起 Verdi（生成设计
+#                          filelist <模块>.f，-ssf -f -sv 连带设计打开波形）
 #      RTL 取 <模块>/rtl/*.sv，testbench 取 <模块>/tb/tb_<模块>.sv（顶层模块名
 #      tb_<模块>）；C 参考模型 top/cmodel/dpi_ref.c（DPI 前端）与模型源文件
 #      （不含 main.c）随 simv 一并编译。产物落 $(RTL_DIR)/<模块>/（.gitignore）。
@@ -192,9 +193,11 @@ rtl:
 	    ./simv $$DUMP | tee simv.out; \
 	    grep -q "SIM PASS" $(CURDIR)/$(RTL_DIR)/$(MOD)/simv.out || exit 1; \
 	    if [ -n "$(GUI_IT)" ]; then \
-	      command -v nWave >/dev/null 2>&1 || { echo "未找到 nWave：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; \
-	      echo "拉起 nWave：波形 tb_$(MOD).fsdb（FSDB 直出；日志：nwave.log）"; \
-	      nohup nWave -f tb_$(MOD).fsdb >nwave.log 2>&1 & \
+	      command -v verdi >/dev/null 2>&1 || { echo "未找到 verdi：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; \
+	      ls $(CURDIR)/$(MOD)/rtl/*.sv > $(MOD).f; \
+	      echo "$(CURDIR)/$(MOD)/tb/tb_$(MOD).sv" >> $(MOD).f; \
+	      echo "拉起 Verdi：波形 tb_$(MOD).fsdb + 设计 filelist $(MOD).f（日志：verdi.log）"; \
+	      nohup verdi -ssf tb_$(MOD).fsdb -f $(MOD).f -sv >verdi.log 2>&1 & \
 	    fi; \
 	  fi; \
 	fi
@@ -249,7 +252,8 @@ syn:
 #    make netlist <模块>      仅编译（综合后网表 + 单元行为模型 + 原 testbench）
 #    make netlist run <模块>  编译并执行（同一 testbench 对 C 参考模型事务级
 #                             比对，判据同 rtl run：SIM PASS）
-#    make netlist gui <模块>  编译并执行（tb 直出 FSDB）并拉起 nWave
+#    make netlist gui <模块>  编译并执行（tb 直出 FSDB）并拉起 Verdi（生成设计
+#                             filelist <模块>.f，-ssf -f -sv 连带设计打开波形）
 #  网表取 $(SYN_DIR)/<模块>/<模块>_netlist.v（缺失自动先 make syn <模块>）；
 #  单元行为模型由 yosys 从 liberty 现场生成，落 $(NETLIST_DIR)/cells_sim.v
 #  （仓库不存单元模型副本）。
@@ -289,9 +293,12 @@ netlist:
 	    ./simv $$DUMP | tee simv.out; \
 	    grep -q "SIM PASS" $(CURDIR)/$(NETLIST_DIR)/$(MOD)/simv.out || exit 1; \
 	    if [ -n "$(GUI_IT)" ]; then \
-	      command -v nWave >/dev/null 2>&1 || { echo "未找到 nWave：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; \
-	      echo "拉起 nWave：波形 tb_$(MOD).fsdb（FSDB 直出；日志：nwave.log）"; \
-	      nohup nWave -f tb_$(MOD).fsdb >nwave.log 2>&1 & \
+	      command -v verdi >/dev/null 2>&1 || { echo "未找到 verdi：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; \
+	      echo "$(CURDIR)/$(SYN_DIR)/$(MOD)/$(MOD)_netlist.v" > $(MOD).f; \
+	      echo "$(CURDIR)/$(NETLIST_DIR)/cells_sim.v" >> $(MOD).f; \
+	      echo "$(CURDIR)/$(MOD)/tb/tb_$(MOD).sv" >> $(MOD).f; \
+	      echo "拉起 Verdi：波形 tb_$(MOD).fsdb + 设计 filelist $(MOD).f（日志：verdi.log）"; \
+	      nohup verdi -ssf tb_$(MOD).fsdb -f $(MOD).f -sv >verdi.log 2>&1 & \
 	    fi; \
 	  fi; \
 	fi
@@ -338,11 +345,11 @@ help:
 	@echo "  kernel           自 $(KERNEL_SRC) 生成内核镜像到 $(KERNEL_DIR)/ (ptx/hex/json/lst)"
 	@echo "  rtl <模块>       RTL 编译（VCS，testbench 为 <模块>/tb/tb_<模块>.sv）"
 	@echo "  rtl run <模块>   RTL 仿真执行（VCS，testbench 为 <模块>/tb/tb_<模块>.sv）"
-	@echo "  rtl gui <模块>   RTL 仿真执行并看波形（tb 直出 FSDB，拉起 nWave）"
+	@echo "  rtl gui <模块>   RTL 仿真执行并看波形（tb 直出 FSDB，Verdi 连带设计打开波形）"
 	@echo "  syn <模块>       门级综合（Yosys + nangate45），产物落 tmp/syn/<模块>/"
 	@echo "  netlist <模块>   门级仿真编译（综合后网表 + 单元行为模型 + 原 testbench）"
 	@echo "  netlist run <模块> 门级仿真执行（对 C 参考模型事务级比对）"
-	@echo "  netlist gui <模块> 门级仿真执行并看波形（tb 直出 FSDB，拉起 nWave）"
+	@echo "  netlist gui <模块> 门级仿真执行并看波形（tb 直出 FSDB，Verdi 连带设计打开波形）"
 	@echo "  clean            清空 tmp/"
 	@echo ""
 	@echo "预留（未实现，均只跑顶层）："
