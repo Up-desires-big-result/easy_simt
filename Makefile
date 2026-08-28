@@ -305,6 +305,11 @@ netlist:
 
 # ===========================================================================
 #  【预留】面积 / 波形 / 功耗 / 性能（均只跑顶层，实现时产物统一落 tmp/ 下）
+#  依赖链（实现时按此接入）：
+#    area  <- syn top（顶层综合，依赖顶层 RTL）
+#    wave  <- syn top 的网表 + 门级 testbench（跑门级仿真出波形）
+#    power <- syn top 的网表 + wave 的波形（网表+波形跑功耗报告）
+#    perf  <- 内核镜像（kernel）+ 顶层 rtl/tb（顶层仿真统计完成 cycle 数）
 # ===========================================================================
 
 # 面积：make area，只跑顶层：打印顶层综合报告的面积
@@ -315,19 +320,19 @@ area:
 
 # 波形：make wave，只跑顶层：跑门级仿真生成波形，供 power 功耗分析使用
 wave:
-	@echo "[预留] wave：门级仿真波形需顶层综合后门级网表（top）与门级 testbench，尚未实现。"
-	@echo "        实现后：跑门级仿真出波形，产物落 $(TMP)/wave/，供 power 功耗分析使用。"
+	@echo "[预留] wave：门级仿真波形需顶层综合后门级网表（先 make syn top）与门级 testbench，尚未实现。"
+	@echo "        实现后：跑门级仿真出波形（VCD/FSDB），产物落 $(TMP)/wave/，供 power 功耗分析使用。"
 	@exit 1
 
 # 功耗：make power，只跑顶层，需综合后门级网表 + wave 生成的门级仿真波形
 power:
-	@echo "[预留] power：功耗需顶层综合后门级网表（top）与门级仿真波形（wave），尚未实现。"
-	@echo "        实现后：顶层网表 + 波形跑功耗，产物落 $(TMP)/power/。"
+	@echo "[预留] power：功耗需顶层综合后门级网表（先 make syn top）与门级仿真波形（先 make wave），尚未实现。"
+	@echo "        实现后：顶层网表 + 波形跑功耗出报告，产物落 $(TMP)/power/。"
 	@exit 1
 
 # 性能：make perf，只跑顶层：从第一个块下发到所有块结束，即同一 kernel 跑完的 cycle 数
 perf:
-	@echo "[预留] perf：kernel 跑完的 cycle 数（第一个块下发到所有块结束），需顶层 rtl + tb，尚未实现。"
+	@echo "[预留] perf：kernel 跑完的 cycle 数（第一个块下发到所有块结束），需顶层 rtl + tb 与内核镜像（先 make kernel），尚未实现。"
 	@echo "        实现后：顶层仿真统计完成 cycle 数，报告落 $(TMP)/perf/。"
 	@exit 1
 
