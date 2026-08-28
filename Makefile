@@ -34,7 +34,7 @@
 #    make rtl <模块>        RTL 仿真（VCS；testbench 为 <模块>/tb/tb_<模块>.sv，WAVE=1 出 VCD）
 #    make cosim <模块>      同 rtl（参考模型经 DPI-C 随 simv 一并编译，语义别名）
 #    make wave <模块>       波形查看提示
-#    make verdi <模块>      VCD 转 FSDB 并拉起 Verdi（缺 VCD 自动生成）
+#    make verdi <模块>      VCD 转 FSDB 并拉起 nWave 波形浏览器（缺 VCD 自动生成）
 #    make help              查看全部目标（含预留）
 #    make clean             清空 tmp/
 #
@@ -226,7 +226,8 @@ wave:
 	  echo "波形：make cosim $(MOD) WAVE=1，VCD 落 $(RTL_DIR)/$(MOD)/tb_$(MOD).vcd（GTKWave/Verdi 查看）"; \
 	fi
 
-# 波形查看：VCD 缺失先生成，转 FSDB 后拉起 Verdi（GUI 后台运行，日志落模块目录）
+# 波形查看：VCD 缺失先生成，转 FSDB 后拉起 nWave（独立波形浏览器，
+# 左侧即信号层次树；GUI 后台运行，日志落模块目录）
 verdi:
 	@if [ -z "$(MOD)" ]; then \
 	  echo "用法：make verdi <模块>，模块 ∈ { $(MODULES) }（当前未指定模块）"; exit 1; \
@@ -238,12 +239,12 @@ verdi:
 	    $(MAKE) --no-print-directory rtl $(MOD) WAVE=1 || exit 1; \
 	  fi; \
 	  { . /opt/synopsys/snop18.sh >/dev/null 2>&1 || true; }; \
-	  command -v verdi    >/dev/null 2>&1 || { echo "未找到 verdi：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; \
+	  command -v nWave    >/dev/null 2>&1 || { echo "未找到 nWave：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; \
 	  command -v vcd2fsdb >/dev/null 2>&1 || { echo "未找到 vcd2fsdb：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; \
 	  cd $(RTL_DIR)/$(MOD) && \
 	  vcd2fsdb tb_$(MOD).vcd -o tb_$(MOD).fsdb || exit 1; \
-	  echo "拉起 Verdi：波形 $(RTL_DIR)/$(MOD)/tb_$(MOD).fsdb（日志：$(RTL_DIR)/$(MOD)/verdi.log）"; \
-	  nohup verdi -ssf tb_$(MOD).fsdb >verdi.log 2>&1 & \
+	  echo "拉起 nWave：波形 $(RTL_DIR)/$(MOD)/tb_$(MOD).fsdb（日志：$(RTL_DIR)/$(MOD)/nwave.log）"; \
+	  nohup nWave -f tb_$(MOD).fsdb >nwave.log 2>&1 & \
 	fi
 
 # DPI 前端独立编译校验（.so）；VCS 路线下参考模型随 simv 编译，不依赖本产物
@@ -271,7 +272,7 @@ help:
 	@echo "  rtl <模块>     RTL 仿真（VCS，testbench 为 <模块>/tb/tb_<模块>.sv）"
 	@echo "  cosim <模块>   同 rtl（C 参考模型经 DPI-C 随 simv 编译）"
 	@echo "  wave <模块>    波形提示（运行加 WAVE=1 出 VCD）"
-	@echo "  verdi <模块>   VCD 转 FSDB 并拉起 Verdi（缺 VCD 自动生成）"
+	@echo "  verdi <模块>   VCD 转 FSDB 并拉起 nWave 波形浏览器（缺 VCD 自动生成）"
 	@echo "  dpi            C 参考模型 DPI 前端独立编译校验（.so）"
 	@echo "  rtl_clean      清理 RTL 仿真产物（tmp/rtl/）"
 	@echo "  clean          清空 tmp/"
