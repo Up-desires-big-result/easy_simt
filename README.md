@@ -12,27 +12,56 @@ source setup.sh
 
 ## 目录约定
 
-构建入口 `Makefile` 位于仓库根，与 `top/` 同级。每个硬件单元（`top` 及各子模块）
-镜像同一结构：`docs/` + `rtl/` + `tb/`。子模块目录与 `top/` 同级平铺。
+构建入口 `Makefile` 位于仓库根，与 `top/` 同级。每个硬件单元（`top` 及各子模块）镜像同一结构 `docs/` + `rtl/` + `tb/`；子模块目录与 `top/` 同级平铺。所有编译、综合、仿真的中间文件与报告统一落仓库根的 `tmp/`（不入库，`make clean` 清空）。
 
-- 单元内命名：`rtl/<单元名>.v`、`tb/<单元名>_tb.v`、`docs/<单元名>_spec.md`，单元名与目录名一致
-- 子模块（与 `top/` 同级，各含 `docs/` + `rtl/` + `tb/`）：
-  `sf` `ws` `bs` `ialu` `falu` `lsu` `icache` `l1sm` `memif` `rf`
-  —— 模块职责与接口见 `top/docs/ma_spec_v0.1.md` §1.4 与 `intf_spec_v0.1.md`
-- `top/`：顶层单元，兼作项目级工具目录
-  - `top/docs/`：项目级文档
-    - `isa_spec_v0.1.md` —— ISA 规范（设计唯一依据）
-    - `ma_spec_v0.1.md` —— 顶层微架构规范
-    - `intf_spec_v0.1.md` —— 顶层接口规范（模块端口命名与 vld/rdy 协议）
-  - `top/assembler/`：PTX → easy_simt ISA 汇编器与端到端验证程序（内含功能级 ISS）
-  - `top/cmodel/`：事务级（transaction-accurate）C 参考模型。不建模时钟，模块间按
-    vld/rdy 握手传递事务；结构上预留经 DPI-C 作为参考模型接入 SystemVerilog
-    testbench（模型库 + 前端分离，见根 `Makefile` 头注）
-  - `top/kernel/`：仅存 CUDA 源码 `easy_simt_kernel.cu`（内核单一源）；`.ptx/.hex/.json/.lst`
-    不入库，由 `make kernel` 现场生成到 `tmp/kernel/`
-  - `top/rtl/`、`top/tb/`：顶层互连单元的 RTL 与 testbench（预留）
-- `tmp/`：所有编译、综合、仿真的中间文件与报告统一落此目录（与 `top/` 同级，不入库）；
-  `make clean` 清空整个 `tmp/`
+仓库结构：
+
+```
+easy_simt/
+├── Makefile                 统一入口：编译 / 回归 / 内核生成 / 综合（仓库根，与 top/ 同级）
+├── setup.sh                 导出 PROJ_ROOT
+├── README.md  LICENSE  .gitignore
+├── tmp/                     所有中间文件与报告（不入库；make clean 清空）
+│   ├── build/sim/           C 模型库 + 回归可执行
+│   ├── build/sim_dbg/       ASan/UBSan 调试版
+│   ├── kernel/              easy_simt_kernel.{ptx,hex,json,lst}（make kernel 自 .cu 生成）
+│   └── syn/<模块>/          门级综合产物（预留）
+├── top/                     顶层互连单元 + 项目级工具目录
+│   ├── docs/                isa_spec_v0.1.md / ma_spec_v0.1.md / intf_spec_v0.1.md
+│   ├── assembler/           easy_simt_assembler.py / easy_simt_assembler_verify.py
+│   ├── cmodel/              事务级 C 参考模型（*.c + sim_common.h）
+│   ├── kernel/              easy_simt_kernel.cu（内核单一源）
+│   └── rtl/  tb/            顶层互连 RTL 与 testbench（预留）
+└── <子模块>/  × 10          每个镜像 docs/ + rtl/ + tb/，与 top/ 同级
+    ├── docs/                单元规范 <单元名>_spec.md（待补）
+    ├── rtl/                 单元 RTL <单元名>.v（待补）
+    └── tb/                  单元 testbench <单元名>_tb.v（待补）
+```
+
+子模块与 `top/` 同级，各含 `docs/` + `rtl/` + `tb/`。模块全集为 10 个功能模块 + `top` 顶层互连（见 ma_spec §1.2、§1.4）：
+
+| 目录 | 模块 |
+|---|---|
+| `sf` | SIMT Frontend |
+| `ws` | Warp Scheduler |
+| `bs` | Block Scheduler |
+| `ialu` | 整数 ALU |
+| `falu` | 浮点 ALU |
+| `lsu` | Load/Store Unit |
+| `icache` | Instruction Cache |
+| `l1sm` | L1 + Shared Memory |
+| `memif` | Memory Interface |
+| `rf` | Register File |
+
+单元内命名：`rtl/<单元名>.v`、`tb/<单元名>_tb.v`、`docs/<单元名>_spec.md`，单元名与目录名一致。模块职责与接口见 `top/docs/ma_spec_v0.1.md` §1.4 与 `intf_spec_v0.1.md`。
+
+`top/` 兼作项目级工具目录：
+
+- `top/docs/` —— 三份顶层规范：`isa_spec_v0.1.md`（ISA 规范，设计唯一依据）、`ma_spec_v0.1.md`（顶层微架构规范）、`intf_spec_v0.1.md`（顶层接口规范，模块端口命名与 vld/rdy 协议）
+- `top/assembler/` —— PTX → easy_simt ISA 汇编器 `easy_simt_assembler.py` 与端到端验证程序 `easy_simt_assembler_verify.py`（内含功能级 ISS）
+- `top/cmodel/` —— 事务级（transaction-accurate）C 参考模型：不建模时钟，模块间按 vld/rdy 握手传递事务，结构上预留经 DPI-C 作为参考模型接入 SystemVerilog testbench（模型库 + 前端分离，见根 `Makefile` 头注）
+- `top/kernel/` —— 仅存 CUDA 源码 `easy_simt_kernel.cu`（内核单一源）；`.ptx/.hex/.json/.lst` 不入库，由 `make kernel` 现场生成到 `tmp/kernel/`
+- `top/rtl/`、`top/tb/` —— 顶层互连单元的 RTL 与 testbench（预留）
 
 ## 构建与回归（根 Makefile）
 
