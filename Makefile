@@ -207,6 +207,9 @@ rtl:
 #    make syn <模块>   综合，产物落 $(SYN_DIR)/<模块>/（网表 / stat.rpt / syn.log）
 #  路径与单元名单约定见 README「工艺库（nangate45）」：库取
 #    $(PDK_ROOT)/nangate45/lib/NangateOpenCellLibrary_typical.lib（PDK_ROOT 自行 export）。
+#  约束：有 $(TOP)/scripts/<模块>.sdc 时，解析时钟周期施加为 abc -D <ps>
+#    （yosys 仅消费时钟周期；IO 延迟供后续 STA / 商用综合消费）；
+#    无约束文件时面积优先映射。
 # ===========================================================================
 YOSYS ?= yosys
 NANGATE_LIB = $(PDK_ROOT)/nangate45/lib/NangateOpenCellLibrary_typical.lib
@@ -232,12 +235,23 @@ syn:
 	  [ -n "$$RTL_FILES" ] || { echo "$(MOD)/rtl/ 下无 RTL"; exit 1; }; \
 	  DONT_USE=$$(sed -n 's/^export DONT_USE_CELLS = //p' $(PDK_ROOT)/nangate45/config.mk); \
 	  DU_FLAGS=""; for c in $$DONT_USE; do DU_FLAGS="$$DU_FLAGS -dont_use $$c"; done; \
+	  SDC_FILE="$(CURDIR)/$(TOP)/scripts/$(MOD).sdc"; \
+	  if [ -f "$$SDC_FILE" ]; then \
+	    PERIOD=$$(sed -n 's/^[[:space:]]*create_clock.*-period[[:space:]]\{1,\}\([0-9.]\{1,\}\).*/\1/p' "$$SDC_FILE" | head -1); \
+	    [ -n "$$PERIOD" ] || { echo "约束文件解析失败（时钟周期）：$(TOP)/scripts/$(MOD).sdc"; exit 1; }; \
+	    ABC_DELAY=$$(awk "BEGIN{printf \"%d\", $$PERIOD*1000}"); \
+	    ABC_CONSTR="-D $$ABC_DELAY"; \
+	    echo "约束：$(TOP)/scripts/$(MOD).sdc（时钟周期 $${PERIOD} ns -> abc -D $${ABC_DELAY} ps）"; \
+	  else \
+	    ABC_CONSTR=""; \
+	    echo "无约束文件（$(TOP)/scripts/$(MOD).sdc），面积优先映射"; \
+	  fi; \
 	  mkdir -p $(SYN_DIR)/$(MOD); \
 	  { echo "read_verilog -sv $$RTL_FILES"; \
 	    echo "hierarchy -top $(MOD)"; \
 	    echo "proc; opt; memory; opt; techmap; opt"; \
 	    echo "dfflibmap -liberty $(NANGATE_LIB) $$DU_FLAGS"; \
-	    echo "abc -liberty $(NANGATE_LIB) $$DU_FLAGS"; \
+	    echo "abc -liberty $(NANGATE_LIB) $$DU_FLAGS $$ABC_CONSTR"; \
 	    echo "opt; clean"; \
 	    echo "tee -o $(CURDIR)/$(SYN_DIR)/$(MOD)/stat.rpt stat -liberty $(NANGATE_LIB)"; \
 	    echo "write_verilog $(CURDIR)/$(SYN_DIR)/$(MOD)/$(MOD)_netlist.v"; \
