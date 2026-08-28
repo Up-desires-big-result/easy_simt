@@ -2,7 +2,8 @@
 # =============================================================
 # easy_simt 环境配置脚本（bash 版）
 # 用法:  source setup.sh        （路径任意，bash 会话内执行）
-# 效果:  设置 PROJ_ROOT 为 easy_simt 仓库根目录
+# 效果:  设置 PROJ_ROOT 为 easy_simt 仓库根目录；
+#        third_party/ 内依赖就位时导出 PDK_ROOT / GPGPU_SIM_ROOT
 # 说明:  csh/tcsh 会话请改用  source setup.csh
 # =============================================================
 
@@ -34,12 +35,33 @@ fi
 
 unset _setup_dir _d _p _depth
 
-# PDK_ROOT：nangate45 工艺库目录（仓库外，见 README「工艺库（nangate45）」）。
-# 未设置时自动探测 ~/pdk（要求其中含 nangate45/）；也可在 source 前自行
-# export PDK_ROOT 覆盖。
-if [ -z "$PDK_ROOT" ]; then
-    if [ -d "$HOME/pdk/nangate45" ]; then
-        export PDK_ROOT="$HOME/pdk"
-        echo "PDK_ROOT  = $PDK_ROOT（自动探测）"
+# ------------------------------------------------------------
+# third_party/：仓库内安装位（make deps 拉取，内容不入库）。
+# 目录就位时 PDK_ROOT / GPGPU_SIM_ROOT 指向仓库内；否则回退
+# 旧逻辑（PDK_ROOT 自动探测 ~/pdk）。手动 export 永远优先。
+# ------------------------------------------------------------
+if [ -n "$PROJ_ROOT" ]; then
+    _tp="$PROJ_ROOT/third_party"
+
+    # orfs 已克隆而软链缺失时补软链（非网络操作，幂等）
+    if [ -d "$_tp/orfs/flow/platforms/nangate45" ] && [ ! -e "$_tp/nangate45" ]; then
+        ln -s orfs/flow/platforms/nangate45 "$_tp/nangate45"
     fi
+
+    if [ -z "$PDK_ROOT" ]; then
+        if [ -d "$_tp/nangate45" ]; then
+            export PDK_ROOT="$_tp"
+            echo "PDK_ROOT  = $PDK_ROOT（third_party）"
+        elif [ -d "$HOME/pdk/nangate45" ]; then
+            export PDK_ROOT="$HOME/pdk"
+            echo "PDK_ROOT  = $PDK_ROOT（自动探测）"
+        fi
+    fi
+
+    if [ -z "$GPGPU_SIM_ROOT" ] && [ -d "$_tp/gpgpu-sim" ]; then
+        export GPGPU_SIM_ROOT="$_tp/gpgpu-sim"
+        echo "GPGPU_SIM_ROOT = $GPGPU_SIM_ROOT（third_party）"
+    fi
+
+    unset _tp
 fi

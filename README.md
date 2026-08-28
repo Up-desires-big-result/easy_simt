@@ -4,19 +4,41 @@ Golden kernel 专用 SIMT 处理器（easy_simt）设计仓库。
 
 ## 前置条件
 
+两个第三方依赖统一装在仓库内的 `third_party/`（内容不入库，`.gitignore`
+忽略），一键拉取：
+
+```
+source setup.sh
+make deps              # 克隆 gpgpu-sim + orfs（仅 nangate45 平台）并建软链
+source setup.sh        # 重新 source，PDK_ROOT / GPGPU_SIM_ROOT 指向 third_party/
+```
+
+`make deps` 内部执行（等价手动安装，可单独按顺序跑）：
+
+```
+git clone --depth 1 https://github.com/gpgpu-sim/gpgpu-sim_distribution.git third_party/gpgpu-sim
+git clone --filter=blob:none --no-checkout --depth 1 https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts.git third_party/orfs
+git -C third_party/orfs sparse-checkout init
+git -C third_party/orfs sparse-checkout set flow/platforms/nangate45
+git -C third_party/orfs checkout
+ln -s orfs/flow/platforms/nangate45 third_party/nangate45
+```
+
+ORFS 用部分克隆 + sparse-checkout，只下载 nangate45 一个平台的 blob（几十 MB），
+不把多平台整仓拉下来——这也是不把它做成 git submodule 的原因；GPGPU-Sim 如需
+钉版本，可另行转为 submodule。网络不通且旧布局 `~/pdk/orfs` 存在时，
+`make deps` 改自本地 `--shared` 克隆（对象经 alternates 引用，不重复占盘），
+`origin` 指回上游地址。环境变量优先级：手动 export > 仓库内
+`third_party/` > `~/pdk` 自动探测（旧布局兼容）。
+
 ### GPGPU-Sim（外部基线对照）
 
 本仓库的黄金基线数据（SM7_TITANV 口径）与原口径交叉验证来自 GPGPU-Sim
-模拟器；主流程（模型编译、综合、回归）不依赖它。获取与构建（需 CUDA
-Toolkit）：
-
-```
-git clone https://github.com/gpgpu-sim/gpgpu-sim_distribution.git
-```
-
-按其仓库 README 构建并进入 GPGPU-Sim 模式环境。注意：在 GPGPU-Sim 下
-运行的 CUDA 程序须以 `nvcc -cudart shared` 编译（cudart 静态链接时
-模拟器无法拦截运行时调用）。
+模拟器；主流程（模型编译、综合、回归）不依赖它。源码位于
+`third_party/gpgpu-sim`（`make deps` 拉取），构建需 CUDA Toolkit，按其仓库
+README 构建并进入 GPGPU-Sim 模式环境（`GPGPU_SIM_ROOT` 由 setup.sh 导出）。
+注意：在 GPGPU-Sim 下运行的 CUDA 程序须以 `nvcc -cudart shared` 编译
+（cudart 静态链接时模拟器无法拦截运行时调用）。
 
 ### 工艺库（nangate45）
 
@@ -25,13 +47,8 @@ git clone https://github.com/gpgpu-sim/gpgpu-sim_distribution.git
 OpenROAD-flow-scripts 仓库发布，无需签协议。标准单元只有 typical 一个工艺角、
 无 SDF、无器件模型卡，因此门级面积与时序只作同一口径下的相对比较，不作签核依据。
 
-工艺库放在仓库外的 `$PDK_ROOT`（不入库）：
-
-```
-git clone --depth 1 https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts.git $PDK_ROOT/orfs
-ln -s $PDK_ROOT/orfs/flow/platforms/nangate45 $PDK_ROOT/nangate45
-```
-
+库文件经 `$PDK_ROOT` 引用（`make deps` 后指向 `third_party/`，旧布局为
+`~/pdk`；其中 `nangate45` 是指向 `orfs/flow/platforms/nangate45` 的软链）。
 只引用、不复制、不手改，保持单一来源。本节及后续 flow 脚本中的数字出自
 `orfs` HEAD `7ff3adf`。
 
@@ -58,15 +75,17 @@ yosys -p "read_liberty -lib $LIB; stat"      # Imported 135 cell types
 ## 仓库组织
 
 构建入口 `Makefile` 位于仓库根，与 `top/` 同级。每个硬件单元（`top` 及各子模块）
-镜像同一结构 `docs/` + `rtl/` + `tb/`；子模块目录与 `top/` 同级平铺。所有编译、
-综合、仿真的中间文件与报告统一落仓库根的 `tmp/`（不入库，`make clean` 清空）。
+镜像同一结构 `docs/` + `rtl/` + `tb/`；10 个子模块目录平铺于 `submodule/` 下，
+与 `top/` 同级。所有编译、综合、仿真的中间文件与报告统一落仓库根的 `tmp/`
+（不入库，`make clean` 清空）。
 
 仓库结构：
 
 ```
 easy_simt/
 ├── Makefile                 统一入口（仓库根，与 top/ 同级）
-├── setup.sh                 导出 PROJ_ROOT；未设置时自动探测 PDK_ROOT
+├── setup.sh                 导出 PROJ_ROOT；依赖就位时导出 PDK_ROOT / GPGPU_SIM_ROOT
+├── third_party/             GPGPU-Sim + ORFS 安装位（make deps 拉取，内容不入库）
 ├── README.md  LICENSE  .gitignore
 ├── tmp/                     所有中间文件与报告（不入库；make clean 清空）
 │   ├── build/sim/           C 模型库 + 回归可执行
@@ -81,14 +100,15 @@ easy_simt/
 │   ├── cmodel/              事务级 C 参考模型（*.c + sim_common.h + DPI 前端 dpi_ref.c）
 │   ├── kernel/              easy_simt_kernel.cu（内核单一源）
 │   └── rtl/  tb/            顶层互连 RTL 与 testbench（预留）
-└── <子模块>/  × 10          每个镜像 docs/ + rtl/ + tb/，与 top/ 同级
-    ├── docs/                单元规范 <单元名>_spec.md（bs 已备，其余待补）
-    ├── rtl/                 单元 RTL <单元名>.sv（bs 已备，其余待补）
-    └── tb/                  单元 testbench tb_<单元名>.sv（bs 已备，其余待补）
+└── submodule/               10 个硬件子模块，与 top/ 同级
+    └── <子模块>/  × 10      每个镜像 docs/ + rtl/ + tb/
+        ├── docs/            单元规范 <单元名>_spec.md（bs 已备，其余待补）
+        ├── rtl/             单元 RTL <单元名>.sv（bs 已备，其余待补）
+        └── tb/              单元 testbench tb_<单元名>.sv（bs 已备，其余待补）
 ```
 
-子模块与 `top/` 同级，各含 `docs/` + `rtl/` + `tb/`。模块全集为 10 个功能模块 +
-`top` 顶层互连（见 ma_spec §1.2、§1.4）：
+子模块位于 `submodule/` 下，与 `top/` 同级，各含 `docs/` + `rtl/` + `tb/`。
+模块全集为 10 个功能模块 + `top` 顶层互连（见 ma_spec §1.2、§1.4）：
 
 | 目录 | 模块 |
 |---|---|

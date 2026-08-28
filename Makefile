@@ -4,8 +4,8 @@
 #  目录约定（详见 README）：
 #    top/       顶层单元 + 工具目录：docs/（三份规范）/ rtl/ / tb/ /
 #               cmodel/ / assembler/ / kernel/
-#    <模块>/    每个硬件子模块与 top 同级，镜像 docs/ + rtl/ + tb/ 结构
-#               模块集合：sf ws bs ialu falu lsu icache l1sm memif rf
+#    submodule/ 10 个硬件子模块（sf ws bs ialu falu lsu icache l1sm memif rf），
+#               与 top/ 同级；每个镜像 docs/ + rtl/ + tb/ 结构
 #    tmp/       一切编译 / 综合 / 仿真的中间产物与报告，与 top 同级；
 #               make clean 清空整个 tmp/（此目录不入库）
 #
@@ -55,6 +55,7 @@ LDLIBS := -lm
 
 # ---- 目录 ----
 TOP       := top
+SUBMOD_DIR := submodule
 SIM_DIR   := $(TOP)/cmodel
 TMP       := tmp
 BUILD     := $(TMP)/build/sim
@@ -94,7 +95,7 @@ RUN_IT := $(filter run,$(MAKECMDGOALS))
 # FSDB）并拉起 Verdi（生成设计 filelist，连带设计打开波形）
 GUI_IT := $(filter gui,$(MAKECMDGOALS))
 
-.PHONY: all cmodel kernel sim_run clean help \
+.PHONY: all cmodel kernel sim_run clean deps help \
         syn netlist area wave power perf rtl \
         $(MODULES) run gui
 
@@ -158,9 +159,9 @@ $(KERNEL_HEX): $(KERNEL_PTX) $(ASSEMBLER) | $(KERNEL_DIR)
 #    make rtl run <模块>   编译后执行（WAVE=1 出 VCD）
 #    make rtl gui <模块>   编译后执行（tb 直出 FSDB）并拉起 Verdi（生成设计
 #                          filelist <模块>.f，-ssf -f -sv 连带设计打开波形）
-#      RTL 取 <模块>/rtl/*.sv，testbench 取 <模块>/tb/tb_<模块>.sv（顶层模块名
-#      tb_<模块>）；C 参考模型 top/cmodel/dpi_ref.c（DPI 前端）与模型源文件
-#      （不含 main.c）随 simv 一并编译。产物落 $(RTL_DIR)/<模块>/（.gitignore）。
+#      RTL 取 submodule/<模块>/rtl/*.sv，testbench 取 submodule/<模块>/tb/tb_<模块>.sv
+#      （顶层模块名 tb_<模块>）；C 参考模型 top/cmodel/dpi_ref.c（DPI 前端）与
+#      模型源文件（不含 main.c）随 simv 一并编译。产物落 $(RTL_DIR)/<模块>/（.gitignore）。
 #      执行时以运行日志中出现 "SIM PASS" 为通过判据。
 #    VCS 环境由 recipe 内 source /opt/synopsys/snop18.sh 提供（license 同该脚本）。
 # ===========================================================================
@@ -181,11 +182,11 @@ rtl:
 	  mkdir -p $(RTL_DIR)/$(MOD) && cd $(RTL_DIR)/$(MOD) && \
 	  { . /opt/synopsys/snop18.sh >/dev/null 2>&1 || true; } && \
 	  { command -v $(VCS) >/dev/null 2>&1 || { echo "未找到 vcs：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; } && \
-	  ls $(CURDIR)/$(MOD)/rtl/*.sv >/dev/null 2>&1 || { echo "$(MOD)/rtl/ 下无 RTL"; exit 1; }; \
+	  ls $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/rtl/*.sv >/dev/null 2>&1 || { echo "$(MOD)/rtl/ 下无 RTL"; exit 1; }; \
 	  $(VCS) $(VCSFLAGS) -P "$$NOVAS/novas.tab" "$$NOVAS/pli.a" \
 	    -top tb_$(MOD) -o simv -Mdir=csrc \
 	    -CFLAGS "-std=gnu99 -I$(CURDIR)/$(SIM_DIR) -ffp-contract=off" \
-	    $(CURDIR)/$(MOD)/rtl/*.sv $(CURDIR)/$(MOD)/tb/tb_$(MOD).sv \
+	    $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/rtl/*.sv $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/tb/tb_$(MOD).sv \
 	    $(addprefix $(CURDIR)/,$(DPI_SRC) $(CORE_SRCS)) || exit 1; \
 	  if [ -n "$(RUN_IT)" ] || [ -n "$(GUI_IT)" ]; then \
 	    if [ -n "$(GUI_IT)" ]; then DUMP="+fsdb=tb_$(MOD).fsdb"; \
@@ -194,8 +195,8 @@ rtl:
 	    grep -q "SIM PASS" $(CURDIR)/$(RTL_DIR)/$(MOD)/simv.out || exit 1; \
 	    if [ -n "$(GUI_IT)" ]; then \
 	      command -v verdi >/dev/null 2>&1 || { echo "未找到 verdi：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; \
-	      ls $(CURDIR)/$(MOD)/rtl/*.sv > $(MOD).f; \
-	      echo "$(CURDIR)/$(MOD)/tb/tb_$(MOD).sv" >> $(MOD).f; \
+	      ls $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/rtl/*.sv > $(MOD).f; \
+	      echo "$(CURDIR)/$(SUBMOD_DIR)/$(MOD)/tb/tb_$(MOD).sv" >> $(MOD).f; \
 	      echo "拉起 Verdi：波形 tb_$(MOD).fsdb + 设计 filelist $(MOD).f（日志：verdi.log）"; \
 	      nohup verdi -ssf tb_$(MOD).fsdb -f $(MOD).f -sv >verdi.log 2>&1 & \
 	    fi; \
@@ -220,8 +221,9 @@ PDK_CHECK = if [ -z "$(PDK_ROOT)" ]; then \
 	    fi; \
 	    [ -f "$(NANGATE_LIB)" ] || { echo "未找到标准单元库：$(NANGATE_LIB)"; exit 1; }
 YOSYS_FIND = if command -v $(YOSYS) >/dev/null 2>&1; then YBIN="$(YOSYS)"; \
+	     elif [ -x "$(CURDIR)/third_party/oss-cad-suite/bin/yosys" ]; then YBIN="$(CURDIR)/third_party/oss-cad-suite/bin/yosys"; \
 	     elif [ -x "$(PDK_ROOT)/oss-cad-suite/bin/yosys" ]; then YBIN="$(PDK_ROOT)/oss-cad-suite/bin/yosys"; \
-	     else echo "未找到 yosys（PATH 或 $(PDK_ROOT)/oss-cad-suite/bin/yosys）"; exit 1; fi
+	     else echo "未找到 yosys（PATH / third_party / $(PDK_ROOT)/oss-cad-suite/bin/yosys）"; exit 1; fi
 
 syn:
 	@if [ -z "$(MOD)" ]; then \
@@ -231,7 +233,7 @@ syn:
 	else \
 	  $(PDK_CHECK); \
 	  $(YOSYS_FIND); \
-	  RTL_FILES="$$(ls $(CURDIR)/$(MOD)/rtl/*.sv 2>/dev/null)"; \
+	  RTL_FILES="$$(ls $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/rtl/*.sv 2>/dev/null)"; \
 	  [ -n "$$RTL_FILES" ] || { echo "$(MOD)/rtl/ 下无 RTL"; exit 1; }; \
 	  DONT_USE=$$(sed -n 's/^export DONT_USE_CELLS = //p' $(PDK_ROOT)/nangate45/config.mk); \
 	  DU_FLAGS=""; for c in $$DONT_USE; do DU_FLAGS="$$DU_FLAGS -dont_use $$c"; done; \
@@ -299,7 +301,7 @@ netlist:
 	    -CFLAGS "-std=gnu99 -I$(CURDIR)/$(SIM_DIR) -ffp-contract=off" \
 	    $(CURDIR)/$(SYN_DIR)/$(MOD)/$(MOD)_netlist.v \
 	    $(CURDIR)/$(NETLIST_DIR)/cells_sim.v \
-	    $(CURDIR)/$(MOD)/tb/tb_$(MOD).sv \
+	    $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/tb/tb_$(MOD).sv \
 	    $(addprefix $(CURDIR)/,$(DPI_SRC) $(CORE_SRCS)) || exit 1; \
 	  if [ -n "$(RUN_IT)" ] || [ -n "$(GUI_IT)" ]; then \
 	    if [ -n "$(GUI_IT)" ]; then DUMP="+fsdb=tb_$(MOD).fsdb"; \
@@ -310,7 +312,7 @@ netlist:
 	      command -v verdi >/dev/null 2>&1 || { echo "未找到 verdi：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; \
 	      echo "$(CURDIR)/$(SYN_DIR)/$(MOD)/$(MOD)_netlist.v" > $(MOD).f; \
 	      echo "$(CURDIR)/$(NETLIST_DIR)/cells_sim.v" >> $(MOD).f; \
-	      echo "$(CURDIR)/$(MOD)/tb/tb_$(MOD).sv" >> $(MOD).f; \
+	      echo "$(CURDIR)/$(SUBMOD_DIR)/$(MOD)/tb/tb_$(MOD).sv" >> $(MOD).f; \
 	      echo "拉起 Verdi：波形 tb_$(MOD).fsdb + 设计 filelist $(MOD).f（日志：verdi.log）"; \
 	      nohup verdi -ssf tb_$(MOD).fsdb -f $(MOD).f -sv >verdi.log 2>&1 & \
 	    fi; \
@@ -351,6 +353,38 @@ perf:
 	@exit 1
 
 # ===========================================================================
+#  第三方依赖（third_party/，内容不入库，.gitignore 忽略）
+#    make deps：一键拉取 GPGPU-Sim 与 OpenROAD-flow-scripts（仅 nangate45
+#    平台），并建 nangate45 软链；完成后重新 source setup.sh 即导出
+#    PDK_ROOT / GPGPU_SIM_ROOT。等价手动命令见 README「前置条件」。
+# ===========================================================================
+THIRD_PARTY := third_party
+GPGPU_SIM_URL := https://github.com/gpgpu-sim/gpgpu-sim_distribution.git
+ORFS_URL := https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts.git
+
+deps:
+	mkdir -p $(THIRD_PARTY)
+	@if [ -d $(THIRD_PARTY)/gpgpu-sim/.git ]; then \
+	  echo "third_party/gpgpu-sim 已存在，跳过克隆"; \
+	else \
+	  git clone --depth 1 $(GPGPU_SIM_URL) $(THIRD_PARTY)/gpgpu-sim; \
+	fi
+	@if [ -d $(THIRD_PARTY)/orfs/.git ]; then \
+	  echo "third_party/orfs 已存在，跳过克隆"; \
+	else \
+	  { git clone --filter=tree:0 --no-checkout --depth 1 $(ORFS_URL) $(THIRD_PARTY)/orfs || \
+	    { [ -d $$HOME/pdk/orfs/.git ] && \
+	      echo "网络克隆失败，改自 ~/pdk/orfs 本地克隆（--shared，对象经 alternates 引用）" && \
+	      git clone --shared --no-checkout $$HOME/pdk/orfs $(THIRD_PARTY)/orfs && \
+	      git -C $(THIRD_PARTY)/orfs remote set-url origin $(ORFS_URL); }; } && \
+	  git -C $(THIRD_PARTY)/orfs sparse-checkout init && \
+	  git -C $(THIRD_PARTY)/orfs sparse-checkout set flow/platforms/nangate45 && \
+	  git -C $(THIRD_PARTY)/orfs checkout; \
+	fi
+	ln -sfn orfs/flow/platforms/nangate45 $(THIRD_PARTY)/nangate45
+	@echo "deps 完成：重新 source setup.sh 后 PDK_ROOT / GPGPU_SIM_ROOT 指向 third_party/"
+
+# ===========================================================================
 
 clean:
 	rm -rf $(TMP)
@@ -369,7 +403,8 @@ help:
 	@echo "  netlist <模块>   门级仿真编译（综合后网表 + 单元行为模型 + 原 testbench）"
 	@echo "  netlist run <模块> 门级仿真执行（对 C 参考模型事务级比对）"
 	@echo "  netlist gui <模块> 门级仿真执行并看波形（tb 直出 FSDB，Verdi 连带设计打开波形）"
-	@echo "  clean            清空 tmp/"
+	@echo "  deps               拉取第三方依赖（GPGPU-Sim + nangate45）到 third_party/"
+	@echo "  clean              清空 tmp/"
 	@echo ""
 	@echo "预留（未实现，均只跑顶层）："
 	@echo "  area             顶层综合面积（单元数 / 芯片面积 / 时序占比）"

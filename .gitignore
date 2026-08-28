@@ -6,3 +6,4 @@ build/
 work/
 transcript
 vsim.wlf
+third_party/
