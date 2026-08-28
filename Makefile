@@ -11,7 +11,8 @@
 #
 #  已实现：C 事务级模型（top/cmodel/）编译与黄金回归；内核镜像自 top/kernel/*.cu 全链生成；
 #          RTL 编译与仿真执行（VCS，make rtl [run] <模块>）；门级综合与面积（Yosys + nangate45）
-#  预留  ：功耗（网表+波形，顶层）、性能（顶层 kernel 完成 cycle 数）
+#  预留  ：门级仿真波形（顶层，供 power 使用）、功耗（网表+波形，顶层）、
+#          性能（顶层 kernel 完成 cycle 数）
 #
 #  内核单一源：top/kernel 只存 CUDA 源码 easy_simt_kernel.cu；
 #    .ptx/.hex/.json/.lst 一律由本 Makefile 现场生成到 tmp/kernel/，不入库：
@@ -32,10 +33,10 @@
 #    make rtl run <模块>    RTL 仿真执行（WAVE=1 出 VCD；参考模型经 DPI-C 随 simv 编译）
 #    make syn <模块>        门级综合（Yosys + nangate45，需 PDK_ROOT，产物落 tmp/syn/<模块>/）
 #    make area <模块>       打印综合报告中的面积
-#    make wave <模块>       波形查看提示
 #    make help              查看全部目标（含预留）
 #    make clean             清空 tmp/
-#    预留：make power（顶层功耗）/ make perf（顶层 kernel 完成 cycle 数）
+#    预留：make wave（顶层门级仿真波形，供 power 使用）/ make power（顶层功耗）/
+#          make perf（顶层 kernel 完成 cycle 数）
 #
 # =============================================================================
 
@@ -217,12 +218,18 @@ area: syn
 	fi
 
 # ===========================================================================
-#  【预留】功耗 / 性能（实现时产物统一落 tmp/ 下）
+#  【预留】波形 / 功耗 / 性能（实现时产物统一落 tmp/ 下）
 # ===========================================================================
 
-# 功耗：make power，只跑顶层，需综合后门级网表 + 仿真波形（VCD/FSDB）
+# 波形：make wave，只跑顶层：跑门级仿真生成波形，供 power 功耗分析使用
+wave:
+	@echo "[预留] wave：门级仿真波形需顶层综合后门级网表（top）与门级 testbench，尚未实现。"
+	@echo "        实现后：跑门级仿真出波形，产物落 $(TMP)/wave/，供 power 功耗分析使用。"
+	@exit 1
+
+# 功耗：make power，只跑顶层，需综合后门级网表 + wave 生成的门级仿真波形
 power:
-	@echo "[预留] power：功耗需顶层综合后门级网表（top）与仿真波形，尚未实现。"
+	@echo "[预留] power：功耗需顶层综合后门级网表（top）与门级仿真波形（wave），尚未实现。"
 	@echo "        实现后：顶层网表 + 波形跑功耗，产物落 $(TMP)/power/。"
 	@exit 1
 
@@ -277,13 +284,6 @@ cosim:
 rtl_clean:
 	rm -rf $(RTL_DIR)
 
-wave:
-	@if [ -z "$(MOD)" ]; then \
-	  echo "用法：make wave <模块>；执行时加 WAVE=1 出波形：make rtl run <模块> WAVE=1"; exit 1; \
-	else \
-	  echo "波形：make rtl run $(MOD) WAVE=1，VCD 落 $(RTL_DIR)/$(MOD)/tb_$(MOD).vcd（GTKWave/Verdi 查看）"; \
-	fi
-
 # 波形查看：VCD 缺失先生成，转 FSDB 后拉起 nWave（独立波形浏览器，
 # 左侧即信号层次树；GUI 后台运行，日志落模块目录）
 verdi:
@@ -329,9 +329,9 @@ help:
 	@echo "  rtl run <模块>   RTL 仿真执行（VCS，testbench 为 <模块>/tb/tb_<模块>.sv）"
 	@echo "  syn <模块>       门级综合（Yosys + nangate45），产物落 tmp/syn/<模块>/"
 	@echo "  area <模块>      打印综合报告中的面积（单元数与芯片面积）"
-	@echo "  wave <模块>      波形提示（运行加 WAVE=1 出 VCD）"
 	@echo "  clean            清空 tmp/"
 	@echo ""
 	@echo "预留（未实现）："
+	@echo "  wave             门级仿真波形（顶层，供 power 使用）"
 	@echo "  power            网表+波形跑功耗（顶层）"
 	@echo "  perf             kernel 跑完的 cycle 数（顶层，第一个块下发到所有块结束）"
