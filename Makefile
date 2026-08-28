@@ -96,7 +96,7 @@ RUN_IT := $(filter run,$(MAKECMDGOALS))
 GUI_IT := $(filter gui,$(MAKECMDGOALS))
 
 .PHONY: all cmodel kernel sim_run clean deps help \
-        syn netlist area wave power perf rtl \
+        syn netlist vsim area wave power perf rtl \
         $(MODULES) run gui
 
 # 允许模块名单独作为目标出现（供 $(MOD) 抓取），本身不做任何事
@@ -320,6 +320,43 @@ netlist:
 	fi
 
 # ===========================================================================
+#  开源仿真路线（Verilator + gtkwave，独立于 VCS）：
+#    make vsim <模块>      Verilator 把 submodule/<模块>/rtl 编译为 C++ 模型，
+#                          链接 harness submodule/<模块>/tb/tb_<模块>_vsim.cpp
+#                          （参考侧直链 top/cmodel，不经 DPI），执行并原生
+#                          转储 VCD，落 $(VSIM_DIR)/<模块>/<模块>.vcd；
+#                          判据同 rtl run：日志出现 VSIM PASS。
+#    make vsim gui <模块>  执行后拉起 gtkwave 查看 VCD。
+# ===========================================================================
+VSIM_DIR := $(TMP)/vsim
+
+vsim:
+	@if [ -z "$(MOD)" ]; then \
+	  echo "用法：make vsim <模块>，模块 ∈ { $(MODULES) }（当前未指定模块）"; exit 1; \
+	elif [ $(words $(MOD)) -gt 1 ]; then \
+	  echo "一次只能仿真一个模块，收到：$(MOD)"; exit 1; \
+	else \
+	  mkdir -p $(VSIM_DIR)/$(MOD) && cd $(VSIM_DIR)/$(MOD) && \
+	  if [ -x $(CURDIR)/third_party/oss-cad-suite/bin/verilator ]; then \
+	    VBIN="$(CURDIR)/third_party/oss-cad-suite/bin/verilator"; \
+	  elif command -v verilator >/dev/null 2>&1; then VBIN=verilator; \
+	  else echo "未找到 verilator（third_party/oss-cad-suite 或 PATH）"; exit 1; fi; \
+	  $$VBIN --exe --cc --trace -Wno-fatal --top-module $(MOD) -Mdir . -o vsim_$(MOD) \
+	    $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/rtl/$(MOD).sv \
+	    $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/tb/tb_$(MOD)_vsim.cpp \
+	    $(addprefix $(CURDIR)/,$(CORE_SRCS)) \
+	    -CFLAGS "-I$(CURDIR)/$(SIM_DIR)" || exit 1; \
+	  $(MAKE) -C . -f V$(MOD).mk CXX=g++-9 CC=gcc-9 LINK=g++-9 || exit 1; \
+	  ./vsim_$(MOD) || exit 1; \
+	  if [ -n "$(GUI_IT)" ]; then \
+	    if [ -x $(CURDIR)/third_party/oss-cad-suite/bin/gtkwave ]; then \
+	      GW="$(CURDIR)/third_party/oss-cad-suite/bin/gtkwave"; else GW=gtkwave; fi; \
+	    echo "拉起 gtkwave：$(MOD).vcd（日志：gtkwave.log）"; \
+	    nohup $$GW $(MOD).vcd >gtkwave.log 2>&1 & \
+	  fi; \
+	fi
+
+# ===========================================================================
 #  【预留】面积 / 波形 / 功耗 / 性能（均只跑顶层，实现时产物统一落 tmp/ 下）
 #  依赖链（实现时按此接入）：
 #    area  <- syn top（顶层综合，依赖顶层 RTL）
@@ -403,6 +440,8 @@ help:
 	@echo "  netlist <模块>   门级仿真编译（综合后网表 + 单元行为模型 + 原 testbench）"
 	@echo "  netlist run <模块> 门级仿真执行（对 C 参考模型事务级比对）"
 	@echo "  netlist gui <模块> 门级仿真执行并看波形（tb 直出 FSDB，Verdi 连带设计打开波形）"
+	@echo "  vsim <模块>      开源仿真（Verilator + C++ harness，参考直链 cmodel，出 VCD）"
+	@echo "  vsim gui <模块>  开源仿真并拉起 gtkwave 看波形"
 	@echo "  deps               拉取第三方依赖（GPGPU-Sim + nangate45）到 third_party/"
 	@echo "  clean              清空 tmp/"
 	@echo ""

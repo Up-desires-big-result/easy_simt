@@ -170,6 +170,8 @@ make syn <模块>         # 门级综合（Yosys + nangate45，消费 top/script
 make netlist <模块>     # 门级仿真编译（网表 + 单元行为模型 + 原 testbench）
 make netlist run <模块> # 门级仿真执行（对 C 参考模型事务级比对）
 make netlist gui <模块> # 门级仿真执行并看波形（tb 直出 FSDB，Verdi 连带设计打开）
+make vsim <模块>      # 开源仿真：Verilator 编译 RTL + C++ harness（参考直链 cmodel），出 VCD
+make vsim gui <模块>  # 开源仿真并拉起 gtkwave 看波形
 make clean              # 清空 tmp/
 make help               # 列出全部目标
 ```
