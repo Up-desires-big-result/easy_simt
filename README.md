@@ -4,32 +4,17 @@ Golden kernel 专用 SIMT 处理器（easy_simt）设计仓库。
 
 ## 前置条件
 
-两个第三方依赖统一装在仓库内的 `third_party/`（内容不入库，`.gitignore`
-忽略），一键拉取：
+两个第三方依赖（GPGPU-Sim、nangate45 工艺库）统一装在仓库内的
+`third_party/`（内容不入库，`.gitignore` 忽略）：
 
 ```
 source setup.sh
-make deps              # 克隆 gpgpu-sim + orfs（仅 nangate45 平台）并建软链
-source setup.sh        # 重新 source，PDK_ROOT / GPGPU_SIM_ROOT 指向 third_party/
+make deps              # 安装第三方依赖
+source setup.sh        # 重新 source，PDK_ROOT / GPGPU_SIM_ROOT 指向仓库内
 ```
 
-`make deps` 内部执行（等价手动安装，可单独按顺序跑）：
-
-```
-git clone --depth 1 https://github.com/gpgpu-sim/gpgpu-sim_distribution.git third_party/gpgpu-sim
-git clone --filter=blob:none --no-checkout --depth 1 https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts.git third_party/orfs
-git -C third_party/orfs sparse-checkout init
-git -C third_party/orfs sparse-checkout set flow/platforms/nangate45
-git -C third_party/orfs checkout
-ln -s orfs/flow/platforms/nangate45 third_party/nangate45
-```
-
-ORFS 用部分克隆 + sparse-checkout，只下载 nangate45 一个平台的 blob（几十 MB），
-不把多平台整仓拉下来——这也是不把它做成 git submodule 的原因；GPGPU-Sim 如需
-钉版本，可另行转为 submodule。网络不通且旧布局 `~/pdk/orfs` 存在时，
-`make deps` 改自本地 `--shared` 克隆（对象经 alternates 引用，不重复占盘），
-`origin` 指回上游地址。环境变量优先级：手动 export > 仓库内
-`third_party/` > `~/pdk` 自动探测（旧布局兼容）。
+环境变量优先级：手动 export > 仓库内 `third_party/` > `~/pdk` 自动探测
+（旧布局兼容）。
 
 ### GPGPU-Sim（外部基线对照）
 
@@ -90,9 +75,9 @@ easy_simt/
 ├── tmp/                     所有中间文件与报告（不入库；make clean 清空）
 │   ├── build/sim/           C 模型库 + 回归可执行
 │   ├── kernel/              easy_simt_kernel.{ptx,hex,json,lst}（make kernel 自 .cu 生成）
-│   ├── rtl/<模块>/          RTL 仿真产物（simv / 日志 / 波形）
+│   ├── rtl/<模块>/          RTL 仿真产物（可执行 / 日志 / VCD 波形）
 │   ├── syn/<模块>/          门级综合产物（网表 / stat.rpt / syn.log / syn.ys）
-│   └── netlist/             门级仿真产物（cells_sim.v 与各模块 simv / 波形）
+│   └── netlist/             门级仿真产物（cells_sim.v 与各模块可执行 / VCD 波形）
 ├── top/                     顶层互连单元 + 项目级工具目录
 │   ├── docs/                isa_spec_v0.1.md / ma_spec_v0.1.md / intf_spec_v0.1.md
 │   ├── scripts/             约束文件（common.sdc，所有模块共用）
@@ -151,8 +136,9 @@ easy_simt/
 source setup.sh
 ```
 
-导出 `PROJ_ROOT`（仓库根目录），供脚本路径引用；`PDK_ROOT` 未设置时自动探测
-`~/pdk`（要求其中含 `nangate45/`）并回显，也可在 source 前自行 `export` 覆盖。
+导出 `PROJ_ROOT`（仓库根目录），供脚本路径引用；第三方依赖就位后
+`PDK_ROOT` / `GPGPU_SIM_ROOT` 自动指向仓库内 `third_party/`，也可在
+source 前自行 `export` 覆盖（手动优先）。
 
 ### Makefile（仓库根执行，产物统一落 `tmp/`）
 
@@ -161,16 +147,16 @@ source setup.sh
 `make deps` 已随 third_party/ 就位）。
 
 ```
-make cmodel             # 编译模型库              -> tmp/build/sim/
-make cmodel run         # 编译并执行模型黄金回归
-make kernel             # 自 top/kernel/*.cu 生成内核镜像 -> tmp/kernel/
-make rtl <模块>         # RTL 仿真编译（Verilator 编译 RTL + C++ harness）
-make rtl run <模块>     # RTL 仿真执行（对 C 参考模型事务级比对，判据 VSIM PASS）
-make rtl gui <模块>     # RTL 仿真执行并拉起 gtkwave 看 VCD
-make syn <模块>         # 门级综合（Yosys + nangate45，消费 top/scripts/common.sdc）
-make netlist <模块>     # 门级仿真编译（网表 + 单元行为模型 + harness，Verilator）
+make cmodel             # 编译事务级模型库
+make cmodel run         # 跑模型黄金回归
+make kernel             # 生成内核镜像
+make rtl <模块>         # RTL 仿真编译
+make rtl run <模块>     # RTL 仿真执行（对 C 参考模型事务级比对）
+make rtl gui <模块>     # RTL 仿真执行并看波形
+make syn <模块>         # 门级综合
+make netlist <模块>     # 门级仿真编译
 make netlist run <模块> # 门级仿真执行（对 C 参考模型事务级比对）
-make netlist gui <模块> # 门级仿真执行并拉起 gtkwave 看 VCD
+make netlist gui <模块> # 门级仿真执行并看波形
 make clean              # 清空 tmp/
 make help               # 列出全部目标
 ```
@@ -187,8 +173,8 @@ make help               # 列出全部目标
 make cmodel run KERNEL=tmp/kernel/easy_simt_kernel.hex N=1000 WARPS=4 LANES=8 MEMLAT=20
 ```
 
-- `WARPS`/`LANES` 必须与模型编译参数（`NWARPS`/`NLANES`）一致，否则回归直接报
-  配置不匹配；如需改动请重新编译并以 `-DNWARPS=… -DNLANES=…` 传入。
+- `WARPS`/`LANES` 须与模型编译口径一致，否则回归直接报配置不匹配；如需改动，
+  以相同口径重新编译模型后再跑。
 - `KERNEL` 为指令镜像（每行一条 32 位指令），BRT 由回归程序自同名 `.json` 自动装载。
 
 回归验收项（对内置 CPU 参考自校验，对应 ma_spec §1.7）：
@@ -203,17 +189,8 @@ make cmodel run KERNEL=tmp/kernel/easy_simt_kernel.hex N=1000 WARPS=4 LANES=8 ME
 
 ### 内核与汇编器
 
-`top/kernel/easy_simt_kernel.cu` 是内核的**单一源**。推荐的重新生成方式是
-`make kernel`，它按全工具链把中间产物与镜像都写到 `tmp/kernel/`（不入库）：
-
-```
-nvcc -ptx -arch=sm_70 -fmad=false top/kernel/easy_simt_kernel.cu -o tmp/kernel/easy_simt_kernel.ptx
-python3 top/assembler/easy_simt_assembler.py tmp/kernel/easy_simt_kernel.ptx -o tmp/kernel/
-```
-
-`.cu -> .ptx` 用 `-arch=sm_70`（对齐 ma_spec 硬件口径 `.target sm_70`）与
-`-fmad=false`（乘/加各一条指令、不做 FMA 收缩，对应模型侧 `-ffp-contract=off`）；
-汇编器一次写出 hex / json / lst。
+`top/kernel/easy_simt_kernel.cu` 是内核的**单一源**；`make kernel` 现场生成
+内核镜像与中间产物到 `tmp/kernel/`（不入库）。
 
 汇编器端到端验证程序（内含功能级 ISS）按**原口径**运行（block=256、块内置换
 掩码 128，与 GPGPU-Sim 基线语义一致），需配合原版 PTX 使用：
