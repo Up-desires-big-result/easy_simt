@@ -4,7 +4,7 @@
 #  目录约定（详见 README）：
 #    top/       顶层单元 + 工具目录：docs/（三份规范）/ rtl/ / tb/ /
 #               cmodel/ / assembler/ / kernel/
-#    submodule/ 10 个硬件子模块（sf ws bs ialu falu lsu icache l1sm memif rf），
+#    submodules/  10 个硬件子模块（sf ws bs ialu falu lsu icache l1sm memif rf），
 #               与 top/ 同级；每个镜像 docs/ + rtl/ + tb/ 结构
 #    tmp/       一切编译 / 综合 / 仿真的中间产物与报告，与 top 同级；
 #               make clean 清空整个 tmp/（此目录不入库）
@@ -53,7 +53,7 @@ LDLIBS := -lm
 
 # ---- 目录 ----
 TOP       := top
-SUBMOD_DIR := submodule
+SUBMOD_DIR := submodules
 SIM_DIR   := $(TOP)/cmodel
 TMP       := tmp
 BUILD     := $(TMP)/build/sim
@@ -195,7 +195,7 @@ rtl:
 #    make syn <模块>   综合，产物落 $(SYN_DIR)/<模块>/（网表 / stat.rpt / syn.log）
 #  路径与单元名单约定见 README「工艺库（nangate45）」：库取
 #    $(PDK_ROOT)/nangate45/lib/NangateOpenCellLibrary_typical.lib（PDK_ROOT 自行 export）。
-#  约束：取通用约束 $(TOP)/scripts/common.sdc（所有模块共用），解析时钟
+#  约束：取通用约束 $(TOP)/sdc/common.sdc（所有模块共用），解析时钟
 #    周期施加为 abc -D <ps>（yosys 仅消费时钟周期；IO 延迟供后续
 #    STA / 商用综合消费）；无约束文件时面积优先映射。
 # ===========================================================================
@@ -224,16 +224,16 @@ syn:
 	  [ -n "$$RTL_FILES" ] || { echo "$(MOD)/rtl/ 下无 RTL"; exit 1; }; \
 	  DONT_USE=$$(sed -n 's/^export DONT_USE_CELLS = //p' $(PDK_ROOT)/nangate45/config.mk); \
 	  DU_FLAGS=""; for c in $$DONT_USE; do DU_FLAGS="$$DU_FLAGS -dont_use $$c"; done; \
-	  SDC_FILE="$(CURDIR)/$(TOP)/scripts/common.sdc"; \
+	  SDC_FILE="$(CURDIR)/$(TOP)/sdc/common.sdc"; \
 	  if [ -f "$$SDC_FILE" ]; then \
 	    PERIOD=$$(sed -n 's/^[[:space:]]*create_clock.*-period[[:space:]]\{1,\}\([0-9.]\{1,\}\).*/\1/p' "$$SDC_FILE" | head -1); \
-	    [ -n "$$PERIOD" ] || { echo "约束文件解析失败（时钟周期）：$(TOP)/scripts/common.sdc"; exit 1; }; \
+	    [ -n "$$PERIOD" ] || { echo "约束文件解析失败（时钟周期）：$(TOP)/sdc/common.sdc"; exit 1; }; \
 	    ABC_DELAY=$$(awk "BEGIN{printf \"%d\", $$PERIOD*1000}"); \
 	    ABC_CONSTR="-D $$ABC_DELAY"; \
-	    echo "约束：$(TOP)/scripts/common.sdc（时钟周期 $${PERIOD} ns -> abc -D $${ABC_DELAY} ps）"; \
+	    echo "约束：$(TOP)/sdc/common.sdc（时钟周期 $${PERIOD} ns -> abc -D $${ABC_DELAY} ps）"; \
 	  else \
 	    ABC_CONSTR=""; \
-	    echo "无约束文件（$(TOP)/scripts/common.sdc），面积优先映射"; \
+	    echo "无约束文件（$(TOP)/sdc/common.sdc），面积优先映射"; \
 	  fi; \
 	  mkdir -p $(SYN_DIR)/$(MOD); \
 	  { echo "read_verilog -sv $$RTL_FILES"; \

@@ -1,7 +1,7 @@
 // =============================================================================
 // easy_simt · bs 的 Verilator harness（开源单仿真路线）
 //
-// 结构：Verilator 把 submodule/bs/rtl/bs.sv 编译为 C++ 模型（Vbs）；
+// 结构：Verilator 把 submodules/bs/rtl/bs.sv 编译为 C++ 模型（Vbs）；
 // 本 harness 驱动时钟/复位/消费者决策，参考侧直接链接 top/cmodel
 // （bs_step），记分板按协议语义逐笔比对（顺序 + 载荷位精确）。
 //

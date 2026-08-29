@@ -60,7 +60,7 @@ yosys -p "read_liberty -lib $LIB; stat"      # Imported 135 cell types
 ## 仓库组织
 
 构建入口 `Makefile` 位于仓库根，与 `top/` 同级。每个硬件单元（`top` 及各子模块）
-镜像同一结构 `docs/` + `rtl/` + `tb/`；10 个子模块目录平铺于 `submodule/` 下，
+镜像同一结构 `docs/` + `rtl/` + `tb/`；10 个子模块目录平铺于 `submodules/` 下，
 与 `top/` 同级。所有编译、综合、仿真的中间文件与报告统一落仓库根的 `tmp/`
 （不入库，`make clean` 清空）。
 
@@ -80,19 +80,19 @@ easy_simt/
 │   └── netlist/             门级仿真产物（cells_sim.v 与各模块可执行 / VCD 波形）
 ├── top/                     顶层互连单元 + 项目级工具目录
 │   ├── docs/                isa_spec_v0.1.md / ma_spec_v0.1.md / intf_spec_v0.1.md
-│   ├── scripts/             约束文件（common.sdc，所有模块共用）
+│   ├── sdc/                 约束文件（common.sdc，所有模块共用）
 │   ├── assembler/           easy_simt_assembler.py / easy_simt_assembler_verify.py
 │   ├── cmodel/              事务级 C 参考模型（*.c + sim_common.h；Verilator harness 直链作参考）
 │   ├── kernel/              easy_simt_kernel.cu（内核单一源）
 │   └── rtl/  tb/            顶层互连 RTL 与 testbench（预留）
-└── submodule/               10 个硬件子模块，与 top/ 同级
+└── submodules/              10 个硬件子模块，与 top/ 同级
     └── <子模块>/  × 10      每个镜像 docs/ + rtl/ + tb/
         ├── docs/            单元规范 <单元名>_spec.md（bs 已备，其余待补）
         ├── rtl/             单元 RTL <单元名>.sv（bs 已备，其余待补）
         └── tb/              单元 testbench tb_<单元名>_vsim.cpp（C++ harness，bs 已备，其余待补）
 ```
 
-子模块位于 `submodule/` 下，与 `top/` 同级，各含 `docs/` + `rtl/` + `tb/`。
+子模块位于 `submodules/` 下，与 `top/` 同级，各含 `docs/` + `rtl/` + `tb/`。
 模块全集为 10 个功能模块 + `top` 顶层互连（见 ma_spec §1.2、§1.4）：
 
 | 目录 | 模块 |
@@ -117,7 +117,7 @@ easy_simt/
 - `top/docs/` —— 三份顶层规范：`isa_spec_v0.1.md`（ISA 规范，设计唯一依据）、
   `ma_spec_v0.1.md`（顶层微架构规范）、`intf_spec_v0.1.md`（顶层接口规范，
   模块端口命名与 vld/rdy 协议）
-- `top/scripts/` —— 约束文件 `common.sdc`（SDC/TCL，时钟与 IO 延迟约束，
+- `top/sdc/` —— 约束文件 `common.sdc`（SDC/TCL，时钟与 IO 延迟约束，
   所有模块共用）
 - `top/assembler/` —— PTX → easy_simt ISA 汇编器 `easy_simt_assembler.py` 与
   端到端验证程序 `easy_simt_assembler_verify.py`（内含功能级 ISS）
