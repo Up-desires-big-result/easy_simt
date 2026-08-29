@@ -1,12 +1,11 @@
 // =============================================================================
-// easy_simt · bs 的 Verilator harness（开源仿真路线，独立于 VCS）
+// easy_simt · bs 的 Verilator harness（开源单仿真路线）
 //
 // 结构：Verilator 把 submodule/bs/rtl/bs.sv 编译为 C++ 模型（Vbs）；
 // 本 harness 驱动时钟/复位/消费者决策，参考侧直接链接 top/cmodel
-// （bs_step，不经 DPI），记分板逻辑与 SV testbench（tb_bs.sv）同构：
-// 同一组决策同时驱动 DUT 与参考，事务逐笔比对（顺序 + 载荷位精确）。
+// （bs_step），记分板按协议语义逐笔比对（顺序 + 载荷位精确）。
 //
-// 波形：Verilator 原生 VCD（<mod>.vcd，落 tmp/vsim/<mod>/），gtkwave 查看。
+// 波形：Verilator 原生 VCD（<mod>.vcd），gtkwave 查看。
 // 判据：末尾 "VSIM PASS"。
 // =============================================================================
 #include <cstdio>
@@ -41,7 +40,7 @@ static void err(const char *msg)
         printf("[vsim][ERR] cyc=%d %s\n", cyc, msg);
 }
 
-// ---------------- 响应器/镜像状态（与 tb_bs.sv 同构） ----------------
+// ---------------- 响应器/镜像状态 ----------------
 static int sf_mode, sf_pct, sf_on, sf_off;
 static int ws_mode, ws_pct, ws_on, ws_off;
 static int bd_lo, bd_hi;
@@ -66,7 +65,7 @@ static int rdy_dec(int mode, int pct, int on, int off, int *pat)
     }
 }
 
-// ---------------- 参考推进一拍（镜像 dpi_ref.c 语义） ----------------
+// ---------------- 参考推进一拍 ----------------
 static void ref_cycle(int sf_rdy, int ws_rdy, int bd_vld, unsigned bd_idx,
                       int *r_sf, unsigned *si, unsigned *sn, unsigned *ss,
                       int *r_ws, unsigned *wi, int *r_bd)

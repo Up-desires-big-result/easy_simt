@@ -11,9 +11,8 @@
 #
 #  已实现：C 事务级模型（top/cmodel/）编译与黄金回归（make cmodel [run]）；
 #          内核镜像自 top/kernel/*.cu 全链生成（make kernel）；
-#          RTL 编译与仿真执行（VCS，make rtl [run|gui] <模块>）；
-#          门级综合（Yosys + nangate45，make syn <模块>）；
-#          门级仿真（make netlist [run|gui] <模块>）
+#          RTL 仿真与门级仿真（Verilator 单路线，make rtl/netlist [run|gui] <模块>）；
+#          门级综合（Yosys + nangate45，make syn <模块>）
 #  预留（均只跑顶层）：面积、门级仿真波形（供 power 使用）、功耗（网表+波形）、
 #          性能（顶层 kernel 完成 cycle 数）
 #
@@ -23,21 +22,20 @@
 #      python3 top/assembler/easy_simt_assembler.py  .ptx -> .hex/.json/.lst
 #
 #  分层约定：
-#    top/cmodel/*.c（不含 main.c、dpi_ref.c） -> tmp/build/sim/libeasy_simt_sim.a  模型库
+#    top/cmodel/*.c（不含 main.c） -> tmp/build/sim/libeasy_simt_sim.a  模型库
 #    top/cmodel/main.c              -> tmp/build/sim/easy_simt_sim        独立回归前端
-#    top/cmodel/dpi_ref.c           -> SV testbench 的 DPI-C 参考模型前端（随 simv 编译）
 #
 #  常用命令（均在仓库根执行）：
 #    make cmodel            编译模型库 + 回归可执行（-> tmp/build/sim/）
 #    make cmodel run        编译并执行模型黄金回归（默认 N=1000 WARPS=4 LANES=8 MEMLAT=20）
 #    make kernel            自 top/kernel/*.cu 生成内核镜像到 tmp/kernel/（.ptx/.hex/.json/.lst）
-#    make rtl <模块>        RTL 编译（VCS；testbench 为 <模块>/tb/tb_<模块>.sv）
-#    make rtl run <模块>    RTL 仿真执行（WAVE=1 出 VCD；参考模型经 DPI-C 随 simv 编译）
-#    make rtl gui <模块>    RTL 仿真执行并看波形（tb 直出 FSDB，Verdi 连带设计打开波形）
+#    make rtl <模块>        RTL 仿真编译（Verilator 编译 RTL + C++ harness）
+#    make rtl run <模块>    RTL 仿真执行（对 C 参考模型事务级比对，判据 VSIM PASS）
+#    make rtl gui <模块>    RTL 仿真执行并拉起 gtkwave 看 VCD
 #    make syn <模块>        门级综合（Yosys + nangate45，需 PDK_ROOT，产物落 tmp/syn/<模块>/）
-#    make netlist <模块>    门级仿真编译（综合后网表 + 单元行为模型 + 原 testbench）
-#    make netlist run <模块> 门级仿真执行（对 C 参考模型事务级比对，WAVE=1 出门级 VCD）
-#    make netlist gui <模块> 门级仿真执行并看波形（tb 直出 FSDB，Verdi 连带设计打开波形）
+#    make netlist <模块>    门级仿真编译（网表 + 单元行为模型 + harness，Verilator）
+#    make netlist run <模块> 门级仿真执行（对 C 参考模型事务级比对）
+#    make netlist gui <模块> 门级仿真执行并拉起 gtkwave 看 VCD
 #    make help              查看全部目标（含预留）
 #    make clean             清空 tmp/
 #    预留（均只跑顶层）：make area（顶层综合面积）/ make wave（门级仿真波形，供 power 使用）/
@@ -82,7 +80,7 @@ WARPS  ?= 4
 LANES  ?= 8
 MEMLAT ?= 20
 
-CORE_SRCS := $(filter-out $(SIM_DIR)/main.c $(SIM_DIR)/dpi_ref.c,$(wildcard $(SIM_DIR)/*.c))
+CORE_SRCS := $(filter-out $(SIM_DIR)/main.c,$(wildcard $(SIM_DIR)/*.c))
 CORE_OBJS := $(patsubst $(SIM_DIR)/%.c,$(BUILD)/%.o,$(CORE_SRCS))
 LIB       := $(BUILD)/libeasy_simt_sim.a
 BIN       := $(BUILD)/easy_simt_sim
@@ -91,12 +89,12 @@ BIN       := $(BUILD)/easy_simt_sim
 MOD := $(filter $(MODULES),$(MAKECMDGOALS))
 # 子命令：make cmodel run / make rtl run bs 中的 run 仅为标记，命中则编译后继续执行
 RUN_IT := $(filter run,$(MAKECMDGOALS))
-# 子命令：make rtl gui bs / make netlist gui bs 中的 gui：执行仿真（tb 直出
-# FSDB）并拉起 Verdi（生成设计 filelist，连带设计打开波形）
+# 子命令：make rtl gui bs / make netlist gui bs 中的 gui：执行仿真（Verilator
+# 原生转储 VCD）并拉起 gtkwave 查看
 GUI_IT := $(filter gui,$(MAKECMDGOALS))
 
 .PHONY: all cmodel kernel sim_run clean deps help \
-        syn netlist vsim area wave power perf rtl \
+        syn netlist area wave power perf rtl \
         $(MODULES) run gui
 
 # 允许模块名单独作为目标出现（供 $(MOD) 抓取），本身不做任何事
@@ -154,24 +152,15 @@ $(KERNEL_HEX): $(KERNEL_PTX) $(ASSEMBLER) | $(KERNEL_DIR)
 	$(PY) $(ASSEMBLER) $(KERNEL_PTX) -o $(KERNEL_DIR)
 
 # ===========================================================================
-#  RTL 编译与仿真执行（VCS）
-#    make rtl <模块>       仅编译
-#    make rtl run <模块>   编译后执行（WAVE=1 出 VCD）
-#    make rtl gui <模块>   编译后执行（tb 直出 FSDB）并拉起 Verdi（生成设计
-#                          filelist <模块>.f，-ssf -f -sv 连带设计打开波形）
-#      RTL 取 submodule/<模块>/rtl/*.sv，testbench 取 submodule/<模块>/tb/tb_<模块>.sv
-#      （顶层模块名 tb_<模块>）；C 参考模型 top/cmodel/dpi_ref.c（DPI 前端）与
-#      模型源文件（不含 main.c）随 simv 一并编译。产物落 $(RTL_DIR)/<模块>/（.gitignore）。
-#      执行时以运行日志中出现 "SIM PASS" 为通过判据。
-#    VCS 环境由 recipe 内 source /opt/synopsys/snop18.sh 提供（license 同该脚本）。
+#  RTL 仿真（Verilator，开源单路线）：
+#    make rtl <模块>       仅编译（Verilator 把 RTL 编译为 C++ 并链接 harness）
+#    make rtl run <模块>   编译并执行；harness tb_<模块>_vsim.cpp 驱动时钟与
+#                          消费者决策，参考侧直链 top/cmodel（bs_step），
+#                          记分板逐笔比对；判据：日志出现 VSIM PASS
+#    make rtl gui <模块>   执行后拉起 gtkwave 查看原生转储的 VCD
+#                          （<模块>.vcd，落 $(RTL_DIR)/<模块>/）
 # ===========================================================================
-VCS      ?= vcs
-VCSFLAGS ?= -full64 -sverilog -timescale=1ns/1ps -debug_access+all \
-            -cpp g++-4.8 -cc gcc-4.8 -LDFLAGS -Wl,--no-as-needed +vcs+lic+wait
 RTL_DIR  := $(TMP)/rtl
-
-# C 参考模型 DPI 前端（第二前端，与模型库同源）
-DPI_SRC  := $(SIM_DIR)/dpi_ref.c
 
 rtl:
 	@if [ -z "$(MOD)" ]; then \
@@ -180,26 +169,24 @@ rtl:
 	  echo "一次只能仿真一个模块，收到：$(MOD)"; exit 1; \
 	else \
 	  mkdir -p $(RTL_DIR)/$(MOD) && cd $(RTL_DIR)/$(MOD) && \
-	  { . /opt/synopsys/snop18.sh >/dev/null 2>&1 || true; } && \
-	  { command -v $(VCS) >/dev/null 2>&1 || { echo "未找到 vcs：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; } && \
-	  ls $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/rtl/*.sv >/dev/null 2>&1 || { echo "$(MOD)/rtl/ 下无 RTL"; exit 1; }; \
-	  $(VCS) $(VCSFLAGS) -P "$$NOVAS/novas.tab" "$$NOVAS/pli.a" \
-	    -top tb_$(MOD) -o simv -Mdir=csrc \
-	    -CFLAGS "-std=gnu99 -I$(CURDIR)/$(SIM_DIR) -ffp-contract=off" \
-	    $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/rtl/*.sv $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/tb/tb_$(MOD).sv \
-	    $(addprefix $(CURDIR)/,$(DPI_SRC) $(CORE_SRCS)) || exit 1; \
+	  if [ -x $(CURDIR)/third_party/oss-cad-suite/bin/verilator ]; then \
+	    VBIN="$(CURDIR)/third_party/oss-cad-suite/bin/verilator"; \
+	  elif command -v verilator >/dev/null 2>&1; then VBIN=verilator; \
+	  else echo "未找到 verilator（third_party/oss-cad-suite 或 PATH）"; exit 1; fi; \
+	  $$VBIN --exe --cc --trace -Wno-fatal --top-module $(MOD) -Mdir . -o vsim_$(MOD) \
+	    $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/rtl/$(MOD).sv \
+	    $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/tb/tb_$(MOD)_vsim.cpp \
+	    $(addprefix $(CURDIR)/,$(CORE_SRCS)) \
+	    -CFLAGS "-I$(CURDIR)/$(SIM_DIR)" || exit 1; \
+	  $(MAKE) -C . -f V$(MOD).mk CXX=g++-9 CC=gcc-9 LINK=g++-9 || exit 1; \
 	  if [ -n "$(RUN_IT)" ] || [ -n "$(GUI_IT)" ]; then \
-	    if [ -n "$(GUI_IT)" ]; then DUMP="+fsdb=tb_$(MOD).fsdb"; \
-	    else DUMP="$(if $(WAVE),+vcd=tb_$(MOD).vcd)"; fi; \
-	    ./simv $$DUMP | tee simv.out; \
-	    grep -q "SIM PASS" $(CURDIR)/$(RTL_DIR)/$(MOD)/simv.out || exit 1; \
-	    if [ -n "$(GUI_IT)" ]; then \
-	      command -v verdi >/dev/null 2>&1 || { echo "未找到 verdi：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; \
-	      ls $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/rtl/*.sv > $(MOD).f; \
-	      echo "$(CURDIR)/$(SUBMOD_DIR)/$(MOD)/tb/tb_$(MOD).sv" >> $(MOD).f; \
-	      echo "拉起 Verdi：波形 tb_$(MOD).fsdb + 设计 filelist $(MOD).f（日志：verdi.log）"; \
-	      nohup verdi -ssf tb_$(MOD).fsdb -f $(MOD).f -sv >verdi.log 2>&1 & \
-	    fi; \
+	    ./vsim_$(MOD) || exit 1; \
+	  fi; \
+	  if [ -n "$(GUI_IT)" ]; then \
+	    if [ -x $(CURDIR)/third_party/oss-cad-suite/bin/gtkwave ]; then \
+	      GW="$(CURDIR)/third_party/oss-cad-suite/bin/gtkwave"; else GW=gtkwave; fi; \
+	    echo "拉起 gtkwave：$(MOD).vcd（日志：gtkwave.log）"; \
+	    nohup $$GW $(MOD).vcd >gtkwave.log 2>&1 & \
 	  fi; \
 	fi
 
@@ -264,15 +251,13 @@ syn:
 	fi
 
 # ===========================================================================
-#  门级仿真（netlist 仿真）：
-#    make netlist <模块>      仅编译（综合后网表 + 单元行为模型 + 原 testbench）
-#    make netlist run <模块>  编译并执行（同一 testbench 对 C 参考模型事务级
-#                             比对，判据同 rtl run：SIM PASS）
-#    make netlist gui <模块>  编译并执行（tb 直出 FSDB）并拉起 Verdi（生成设计
-#                             filelist <模块>.f，-ssf -f -sv 连带设计打开波形）
+#  门级仿真（Verilator）：
+#    make netlist <模块>      仅编译（网表 + 单元行为模型 + harness）
+#    make netlist run <模块>  编译并执行，对 C 参考模型事务级比对，判据 VSIM PASS
+#    make netlist gui <模块>  执行后拉起 gtkwave 查看 VCD
 #  网表取 $(SYN_DIR)/<模块>/<模块>_netlist.v（缺失自动先 make syn <模块>）；
 #  单元行为模型由 yosys 从 liberty 现场生成，落 $(NETLIST_DIR)/cells_sim.v
-#  （仓库不存单元模型副本）。
+#  （仓库不存单元模型）。
 # ===========================================================================
 NETLIST_DIR := $(TMP)/netlist
 
@@ -282,72 +267,31 @@ netlist:
 	elif [ $(words $(MOD)) -gt 1 ]; then \
 	  echo "一次只能仿真一个模块，收到：$(MOD)"; exit 1; \
 	else \
-	  $(PDK_CHECK); \
-	  $(YOSYS_FIND); \
+	  mkdir -p $(NETLIST_DIR)/$(MOD) && cd $(NETLIST_DIR)/$(MOD) && \
 	  if [ ! -f $(CURDIR)/$(SYN_DIR)/$(MOD)/$(MOD)_netlist.v ]; then \
 	    echo "未检测到网表，先综合：make syn $(MOD)"; \
 	    $(MAKE) --no-print-directory syn $(MOD) || exit 1; \
 	  fi; \
-	  mkdir -p $(NETLIST_DIR); \
 	  if [ ! -f $(NETLIST_DIR)/cells_sim.v ]; then \
-	    echo "== 生成单元行为模型（liberty → cells_sim.v）=="; \
+	    $(PDK_CHECK); \
+	    $(YOSYS_FIND); \
+	    echo "== 生成单元行为模型（liberty -> cells_sim.v）=="; \
 	    $$YBIN -p "read_liberty -ignore_miss_func -ignore_miss_dir -ignore_miss_data_latch $(NANGATE_LIB); write_verilog $(CURDIR)/$(NETLIST_DIR)/cells_sim.v" || exit 1; \
 	  fi; \
-	  mkdir -p $(NETLIST_DIR)/$(MOD) && cd $(NETLIST_DIR)/$(MOD) && \
-	  { . /opt/synopsys/snop18.sh >/dev/null 2>&1 || true; } && \
-	  { command -v $(VCS) >/dev/null 2>&1 || { echo "未找到 vcs：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; } && \
-	  $(VCS) $(VCSFLAGS) -P "$$NOVAS/novas.tab" "$$NOVAS/pli.a" \
-	    -top tb_$(MOD) -o simv -Mdir=csrc \
-	    -CFLAGS "-std=gnu99 -I$(CURDIR)/$(SIM_DIR) -ffp-contract=off" \
-	    $(CURDIR)/$(SYN_DIR)/$(MOD)/$(MOD)_netlist.v \
-	    $(CURDIR)/$(NETLIST_DIR)/cells_sim.v \
-	    $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/tb/tb_$(MOD).sv \
-	    $(addprefix $(CURDIR)/,$(DPI_SRC) $(CORE_SRCS)) || exit 1; \
-	  if [ -n "$(RUN_IT)" ] || [ -n "$(GUI_IT)" ]; then \
-	    if [ -n "$(GUI_IT)" ]; then DUMP="+fsdb=tb_$(MOD).fsdb"; \
-	    else DUMP="$(if $(WAVE),+vcd=tb_$(MOD).vcd)"; fi; \
-	    ./simv $$DUMP | tee simv.out; \
-	    grep -q "SIM PASS" $(CURDIR)/$(NETLIST_DIR)/$(MOD)/simv.out || exit 1; \
-	    if [ -n "$(GUI_IT)" ]; then \
-	      command -v verdi >/dev/null 2>&1 || { echo "未找到 verdi：请先配置 Synopsys 环境（/opt/synopsys/snop18.sh）"; exit 1; }; \
-	      echo "$(CURDIR)/$(SYN_DIR)/$(MOD)/$(MOD)_netlist.v" > $(MOD).f; \
-	      echo "$(CURDIR)/$(NETLIST_DIR)/cells_sim.v" >> $(MOD).f; \
-	      echo "$(CURDIR)/$(SUBMOD_DIR)/$(MOD)/tb/tb_$(MOD).sv" >> $(MOD).f; \
-	      echo "拉起 Verdi：波形 tb_$(MOD).fsdb + 设计 filelist $(MOD).f（日志：verdi.log）"; \
-	      nohup verdi -ssf tb_$(MOD).fsdb -f $(MOD).f -sv >verdi.log 2>&1 & \
-	    fi; \
-	  fi; \
-	fi
-
-# ===========================================================================
-#  开源仿真路线（Verilator + gtkwave，独立于 VCS）：
-#    make vsim <模块>      Verilator 把 submodule/<模块>/rtl 编译为 C++ 模型，
-#                          链接 harness submodule/<模块>/tb/tb_<模块>_vsim.cpp
-#                          （参考侧直链 top/cmodel，不经 DPI），执行并原生
-#                          转储 VCD，落 $(VSIM_DIR)/<模块>/<模块>.vcd；
-#                          判据同 rtl run：日志出现 VSIM PASS。
-#    make vsim gui <模块>  执行后拉起 gtkwave 查看 VCD。
-# ===========================================================================
-VSIM_DIR := $(TMP)/vsim
-
-vsim:
-	@if [ -z "$(MOD)" ]; then \
-	  echo "用法：make vsim <模块>，模块 ∈ { $(MODULES) }（当前未指定模块）"; exit 1; \
-	elif [ $(words $(MOD)) -gt 1 ]; then \
-	  echo "一次只能仿真一个模块，收到：$(MOD)"; exit 1; \
-	else \
-	  mkdir -p $(VSIM_DIR)/$(MOD) && cd $(VSIM_DIR)/$(MOD) && \
 	  if [ -x $(CURDIR)/third_party/oss-cad-suite/bin/verilator ]; then \
 	    VBIN="$(CURDIR)/third_party/oss-cad-suite/bin/verilator"; \
 	  elif command -v verilator >/dev/null 2>&1; then VBIN=verilator; \
 	  else echo "未找到 verilator（third_party/oss-cad-suite 或 PATH）"; exit 1; fi; \
 	  $$VBIN --exe --cc --trace -Wno-fatal --top-module $(MOD) -Mdir . -o vsim_$(MOD) \
-	    $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/rtl/$(MOD).sv \
+	    $(CURDIR)/$(SYN_DIR)/$(MOD)/$(MOD)_netlist.v \
+	    $(CURDIR)/$(NETLIST_DIR)/cells_sim.v \
 	    $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/tb/tb_$(MOD)_vsim.cpp \
 	    $(addprefix $(CURDIR)/,$(CORE_SRCS)) \
 	    -CFLAGS "-I$(CURDIR)/$(SIM_DIR)" || exit 1; \
 	  $(MAKE) -C . -f V$(MOD).mk CXX=g++-9 CC=gcc-9 LINK=g++-9 || exit 1; \
-	  ./vsim_$(MOD) || exit 1; \
+	  if [ -n "$(RUN_IT)" ] || [ -n "$(GUI_IT)" ]; then \
+	    ./vsim_$(MOD) || exit 1; \
+	  fi; \
 	  if [ -n "$(GUI_IT)" ]; then \
 	    if [ -x $(CURDIR)/third_party/oss-cad-suite/bin/gtkwave ]; then \
 	      GW="$(CURDIR)/third_party/oss-cad-suite/bin/gtkwave"; else GW=gtkwave; fi; \
@@ -374,7 +318,7 @@ area:
 # 波形：make wave，只跑顶层：跑门级仿真生成波形，供 power 功耗分析使用
 wave:
 	@echo "[预留] wave：门级仿真波形需顶层综合后门级网表（先 make syn top）与门级 testbench，尚未实现。"
-	@echo "        实现后：跑门级仿真出波形（VCD/FSDB），产物落 $(TMP)/wave/，供 power 功耗分析使用。"
+	@echo "        实现后：跑门级仿真出波形（VCD），产物落 $(TMP)/wave/，供 power 功耗分析使用。"
 	@exit 1
 
 # 功耗：make power，只跑顶层，需综合后门级网表 + wave 生成的门级仿真波形
@@ -433,15 +377,13 @@ help:
 	@echo "  cmodel           编译模型库"
 	@echo "  cmodel run       编译并执行模型"
 	@echo "  kernel           自 $(KERNEL_SRC) 生成内核镜像到 $(KERNEL_DIR)/ (ptx/hex/json/lst)"
-	@echo "  rtl <模块>       RTL 编译（VCS，testbench 为 <模块>/tb/tb_<模块>.sv）"
-	@echo "  rtl run <模块>   RTL 仿真执行（VCS，testbench 为 <模块>/tb/tb_<模块>.sv）"
-	@echo "  rtl gui <模块>   RTL 仿真执行并看波形（tb 直出 FSDB，Verdi 连带设计打开波形）"
+	@echo "  rtl <模块>       RTL 仿真编译（Verilator 编译 RTL + C++ harness）"
+	@echo "  rtl run <模块>   RTL 仿真执行（对 C 参考模型事务级比对）"
+	@echo "  rtl gui <模块>   RTL 仿真执行并拉起 gtkwave 看波形"
 	@echo "  syn <模块>       门级综合（Yosys + nangate45），产物落 tmp/syn/<模块>/"
-	@echo "  netlist <模块>   门级仿真编译（综合后网表 + 单元行为模型 + 原 testbench）"
+	@echo "  netlist <模块>   门级仿真编译（网表 + 单元行为模型 + harness，Verilator）"
 	@echo "  netlist run <模块> 门级仿真执行（对 C 参考模型事务级比对）"
-	@echo "  netlist gui <模块> 门级仿真执行并看波形（tb 直出 FSDB，Verdi 连带设计打开波形）"
-	@echo "  vsim <模块>      开源仿真（Verilator + C++ harness，参考直链 cmodel，出 VCD）"
-	@echo "  vsim gui <模块>  开源仿真并拉起 gtkwave 看波形"
+	@echo "  netlist gui <模块> 门级仿真执行并拉起 gtkwave 看波形"
 	@echo "  deps               拉取第三方依赖（GPGPU-Sim + nangate45）到 third_party/"
 	@echo "  clean              清空 tmp/"
 	@echo ""

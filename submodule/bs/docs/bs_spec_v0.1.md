@@ -256,4 +256,4 @@ ws 侧 T1 握手后 `ws_done` 置 1、`bs_ws_launch_vld` 清 0 且不再拉起�
 | B6 | 协议 | `vld` 保持与载荷稳定（§8 条 1）；复位期间 `vld` 恒 0 |
 | B7 | 背压 | 两侧 `rdy` 任意组合（含长背压、错峰握手、背靠背零延迟）下 B1–B6 成立 |
 
-参考模型：`top/cmodel` 经 DPI-C 接入 testbench（`top/cmodel/dpi_ref.c` 为 DPI 前端），参考事务序列与 DUT 事务序列在线比对。
+参考模型：testbench（Verilator C++ harness）直接链接 `top/cmodel`，参考事务序列与 DUT 事务序列在线比对。

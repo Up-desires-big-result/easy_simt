@@ -97,14 +97,14 @@ easy_simt/
 │   ├── docs/                isa_spec_v0.1.md / ma_spec_v0.1.md / intf_spec_v0.1.md
 │   ├── scripts/             约束文件（common.sdc，所有模块共用）
 │   ├── assembler/           easy_simt_assembler.py / easy_simt_assembler_verify.py
-│   ├── cmodel/              事务级 C 参考模型（*.c + sim_common.h + DPI 前端 dpi_ref.c）
+│   ├── cmodel/              事务级 C 参考模型（*.c + sim_common.h；Verilator harness 直链作参考）
 │   ├── kernel/              easy_simt_kernel.cu（内核单一源）
 │   └── rtl/  tb/            顶层互连 RTL 与 testbench（预留）
 └── submodule/               10 个硬件子模块，与 top/ 同级
     └── <子模块>/  × 10      每个镜像 docs/ + rtl/ + tb/
         ├── docs/            单元规范 <单元名>_spec.md（bs 已备，其余待补）
         ├── rtl/             单元 RTL <单元名>.sv（bs 已备，其余待补）
-        └── tb/              单元 testbench tb_<单元名>.sv（bs 已备，其余待补）
+        └── tb/              单元 testbench tb_<单元名>_vsim.cpp（C++ harness，bs 已备，其余待补）
 ```
 
 子模块位于 `submodule/` 下，与 `top/` 同级，各含 `docs/` + `rtl/` + `tb/`。
@@ -123,7 +123,7 @@ easy_simt/
 | `memif` | Memory Interface |
 | `rf` | Register File |
 
-单元内命名：`rtl/<单元名>.sv`、`tb/tb_<单元名>.sv`、`docs/<单元名>_spec.md`，
+单元内命名：`rtl/<单元名>.sv`、`tb/tb_<单元名>_vsim.cpp`、`docs/<单元名>_spec.md`，
 单元名与目录名一致。模块职责与接口见 `top/docs/ma_spec_v0.1.md` §1.4 与
 `intf_spec_v0.1.md`。当前 `bs` 的 spec / RTL / testbench 三件套已备，其余模块待补。
 
@@ -137,8 +137,8 @@ easy_simt/
 - `top/assembler/` —— PTX → easy_simt ISA 汇编器 `easy_simt_assembler.py` 与
   端到端验证程序 `easy_simt_assembler_verify.py`（内含功能级 ISS）
 - `top/cmodel/` —— 事务级（transaction-accurate）C 参考模型：不建模时钟，
-  模块间按 vld/rdy 握手传递事务；`dpi_ref.c` 为其经 DPI-C 接入 SystemVerilog
-  testbench 的前端（随 simv 编译）
+  模块间按 vld/rdy 握手传递事务；Verilator 的 C++ harness 直接链接该模型
+  作为仿真参考（同一份源码亦跑独立黄金回归）
 - `top/kernel/` —— 仅存 CUDA 源码 `easy_simt_kernel.cu`（内核单一源）；
   `.ptx/.hex/.json/.lst` 不入库，由 `make kernel` 现场生成到 `tmp/kernel/`
 - `top/rtl/`、`top/tb/` —— 顶层互连单元的 RTL 与 testbench（预留）
@@ -157,21 +157,20 @@ source setup.sh
 ### Makefile（仓库根执行，产物统一落 `tmp/`）
 
 依赖：make、支持 C99 的 gcc；生成内核镜像另需 nvcc（CUDA）与 python3；
-RTL 仿真为 VCS（recipe 内自动装载 Synopsys 环境）；综合为 Yosys（oss-cad-suite）。
+仿真为 Verilator、波形查看为 gtkwave、综合为 Yosys（三者均出自 oss-cad-suite，
+`make deps` 已随 third_party/ 就位）。
 
 ```
 make cmodel             # 编译模型库              -> tmp/build/sim/
 make cmodel run         # 编译并执行模型黄金回归
 make kernel             # 自 top/kernel/*.cu 生成内核镜像 -> tmp/kernel/
-make rtl <模块>         # RTL 编译（VCS）
-make rtl run <模块>     # RTL 仿真执行（WAVE=1 出 VCD；参考模型经 DPI-C 随 simv 编译）
-make rtl gui <模块>     # RTL 仿真执行并看波形（tb 直出 FSDB，Verdi 连带设计打开）
+make rtl <模块>         # RTL 仿真编译（Verilator 编译 RTL + C++ harness）
+make rtl run <模块>     # RTL 仿真执行（对 C 参考模型事务级比对，判据 VSIM PASS）
+make rtl gui <模块>     # RTL 仿真执行并拉起 gtkwave 看 VCD
 make syn <模块>         # 门级综合（Yosys + nangate45，消费 top/scripts/common.sdc）
-make netlist <模块>     # 门级仿真编译（网表 + 单元行为模型 + 原 testbench）
+make netlist <模块>     # 门级仿真编译（网表 + 单元行为模型 + harness，Verilator）
 make netlist run <模块> # 门级仿真执行（对 C 参考模型事务级比对）
-make netlist gui <模块> # 门级仿真执行并看波形（tb 直出 FSDB，Verdi 连带设计打开）
-make vsim <模块>      # 开源仿真：Verilator 编译 RTL + C++ harness（参考直链 cmodel），出 VCD
-make vsim gui <模块>  # 开源仿真并拉起 gtkwave 看波形
+make netlist gui <模块> # 门级仿真执行并拉起 gtkwave 看 VCD
 make clean              # 清空 tmp/
 make help               # 列出全部目标
 ```
