@@ -4,6 +4,7 @@
 日期：2026-08-30
 依据文档：`top/docs/ma_spec_v0.1.md`（§1.3、§1.4、§1.7、§5）、`top/docs/intf_spec_v0.1.md`（§1、§2、§5）、`top/docs/isa_spec_v0.1.md`（§1.3、§1.7、§1.8、§2–§8、§16–§18）、`top/cmodel/ialu.c`、`top/cmodel/softfloat.c`（`f32_gt`）、`top/cmodel/sim_common.h`（偏差 C3、C5）。
 适用范围：本文档定义 ialu（Integer ALU）的模块级设计：端口、参数、内部状态、数据通路、状态机、通道时序与协议约束，是 `ialu/rtl/ialu.sv` 实现与 `ialu/tb/` 验证的直接依据。
+修订记录：2026-08-30 结构改进：§2 端口章改为引用 intf_spec §5（单源规则），删除复制的端口表，保留模块补充。端口定义不变。
 
 ---
 
@@ -105,45 +106,20 @@ ialu 是整数执行单元，职责为**整数运算 + 分支解析**（ma_spec 
 
 ## 2. 端口
 
-端口命名与位宽与 intf_spec §5 一致（issue 载荷含 `opc`，见 intf_spec 勘误与 §1.3）；`clk`/`rst_n` 按 intf_spec §1.3 携带。
+端口命名、方向与位宽见 intf_spec §5（单源规则见 intf_spec §1；issue 载荷含 `opc`，见 intf_spec 勘误记录与本规范 §1.3）；`clk`/`rst_n` 按 intf_spec §1.3 携带。无模块级增设端口。
 
-| 端口 | I/O | 位宽 | 所属通道 | 说明 |
-|---|---|---|---|---|
-| `clk` | 输入 | 1 | — | 时钟，上升沿有效 |
-| `rst_n` | 输入 | 1 | — | 异步复位，低有效 |
-| `sf_ialu_issue_vld` | 输入 | 1 | sf_ialu_issue | sf 发射 |
-| `sf_ialu_issue_opcode` | 输入 | 5 | sf_ialu_issue | 操作码（`OPCODE_W`） |
-| `sf_ialu_issue_rd` | 输入 | 5 | sf_ialu_issue | 目的寄存器；SETP 时承载 `pd`，BR 时承载 `psel` |
-| `sf_ialu_issue_warp_id` | 输入 | 2 | sf_ialu_issue | warp 号 |
-| `sf_ialu_issue_lane_mask` | 输入 | 8 | sf_ialu_issue | 发射时 active mask 快照 |
-| `sf_ialu_issue_pc` | 输入 | 32 | sf_ialu_issue | 接收但内部不使用（§1.3） |
-| `sf_ialu_issue_imm` | 输入 | 32 | sf_ialu_issue | SETP：`(fmt<<3)|cond`；BR：`(u<<31)|(neg<<30)|target`；其余为 0 |
-| `sf_ialu_issue_opa` | 输入 | 256 | sf_ialu_issue | 逐 lane 源 A（`NLANES×DATA_W`） |
-| `sf_ialu_issue_opb` | 输入 | 256 | sf_ialu_issue | 逐 lane 源 B |
-| `sf_ialu_issue_opc` | 输入 | 256 | sf_ialu_issue | 逐 lane 源 C，仅 IMAD 有效（偏差 C5） |
-| `ialu_sf_issue_rdy` | 输出 | 1 | sf_ialu_issue | 仅 `S_IDLE` 为 1 |
-| `ialu_sf_br_vld` | 输出 | 1 | ialu_sf_br | 分支决议 |
-| `ialu_sf_br_warp_id` | 输出 | 2 | ialu_sf_br | warp 号 |
-| `ialu_sf_br_taken` | 输出 | 8 | ialu_sf_br | 每 lane taken 向量 |
-| `ialu_sf_br_target` | 输出 | 32 | ialu_sf_br | 目标字地址 |
-| `ialu_sf_br_brt_idx` | 输出 | 2 | ialu_sf_br | 恒 0（sf 按分支 pc 查 BRT，§1.3） |
-| `sf_ialu_br_rdy` | 输入 | 1 | ialu_sf_br | sf 侧握手 |
-| `ialu_rf_wb_vld` | 输出 | 1 | ialu_rf_wb | 写回 |
-| `ialu_rf_wb_warp_id` | 输出 | 2 | ialu_rf_wb | warp 号 |
-| `ialu_rf_wb_rd` | 输出 | 5 | ialu_rf_wb | 目的寄存器 |
-| `ialu_rf_wb_lane_mask` | 输出 | 8 | ialu_rf_wb | 写使能（发射时快照随路，intf_spec §6 说明） |
-| `ialu_rf_wb_wdata` | 输出 | 256 | ialu_rf_wb | 逐 lane 写数据 |
-| `rf_ialu_wb_rdy` | 输入 | 1 | ialu_rf_wb | rf 侧握手 |
-| `ialu_sf_wbdone_vld` | 输出 | 1 | ialu_sf_wbdone | 写回完成 |
-| `ialu_sf_wbdone_warp_id` | 输出 | 2 | ialu_sf_wbdone | warp 号 |
-| `ialu_sf_wbdone_rd` | 输出 | 5 | ialu_sf_wbdone | 目的寄存器（SETP 为 `pd`），供 sf 清记分板 |
-| `sf_ialu_wbdone_rdy` | 输入 | 1 | ialu_sf_wbdone | sf 侧握手 |
+模块补充（行为约束，详见 §9）：
+
+- `ialu_sf_issue_rdy` 仅在 `S_IDLE` 为 1；
+- `sf_ialu_issue_pc` 接收但内部不使用（§1.3）；
+- `ialu_sf_br_brt_idx` 恒 0（§1.3）；
+- `sf_ialu_issue_rd` 在 SETP 时承载 `pd`、BR 时承载 `psel`（§1.3）。
 
 ---
 
 ## 3. 参数与配置
 
-| 参数 | 默认 | 含义 |
+| 参数 | 基线值 | 含义 |
 |---|---|---|
 | `DATA_W` | 32 | 数据/地址/载荷位宽（intf_spec §1.4） |
 | `NWARPS` | 4 | warp 数/块（ma_spec §1.2） |

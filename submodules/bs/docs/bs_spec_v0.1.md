@@ -1,9 +1,10 @@
 # bs — Block Scheduler 模块规范
 
 版本：v0.1
-日期：2026-08-28
+日期：2026-08-30
 依据文档：`top/docs/ma_spec_v0.1.md`（§1.2、§1.4、§1.6、§4）、`top/docs/intf_spec_v0.1.md`（§1、§4）、`top/cmodel/bs.c`、`top/cmodel/top.c`、`top/cmodel/sim_common.h`。
 适用范围：本文档定义 bs（Block Scheduler）的模块级设计：端口、参数、内部状态、状态机、通道时序与协议约束，是 `bs/rtl/bs.sv` 实现与 `bs/tb/` 验证的直接依据。
+修订记录：2026-08-30 结构改进：§2 端口章改为引用 intf_spec §4（单源规则），删除复制的端口表，保留模块补充。端口定义不变。
 
 ---
 
@@ -79,33 +80,16 @@ v1 单块在途，`shbase` 恒为 0（ma_spec §4）。`SHBASE` 分区逻辑与 
 
 ## 2. 端口
 
-端口命名与位宽与 intf_spec §4 一致；`clk`/`rst_n` 按 intf_spec §1.3 携带；`bs_cfg_n` 为本规范增设的模块级配置输入（见 §3）。
+端口命名、方向与位宽见 intf_spec §4（单源规则见 intf_spec §1）；`clk`/`rst_n` 按 intf_spec §1.3 携带。模块补充如下：
 
-| 端口 | I/O | 位宽 | 所属通道 | 说明 |
-|---|---|---|---|---|
-| `clk` | 输入 | 1 | — | 时钟，上升沿有效 |
-| `rst_n` | 输入 | 1 | — | 异步复位，低有效 |
-| `bs_cfg_n` | 输入 | 32 | — | 配置：N（每块线程总数），静态，见 §3 |
-| `bs_sf_launch_vld` | 输出 | 1 | bs_sf_launch | 向 sf 发起块启动 |
-| `bs_sf_launch_block_idx` | 输出 | 32 | bs_sf_launch | 启动上下文：块索引 |
-| `bs_sf_launch_n` | 输出 | 32 | bs_sf_launch | 启动上下文：N |
-| `bs_sf_launch_shbase` | 输出 | 32 | bs_sf_launch | 启动上下文：共享内存基址，v1 恒 0 |
-| `sf_bs_launch_rdy` | 输入 | 1 | bs_sf_launch | sf 侧握手 |
-| `bs_ws_launch_vld` | 输出 | 1 | bs_ws_launch | 向 ws 发起块启动 |
-| `bs_ws_launch_block_idx` | 输出 | 32 | bs_ws_launch | 启动上下文：块索引 |
-| `ws_bs_launch_rdy` | 输入 | 1 | bs_ws_launch | ws 侧握手 |
-| `ws_bs_bdone_vld` | 输入 | 1 | ws_bs_bdone | ws 上报块完成 |
-| `ws_bs_bdone_block_idx` | 输入 | 32 | ws_bs_bdone | 完成块索引（bs 不校验） |
-| `bs_ws_bdone_rdy` | 输出 | 1 | ws_bs_bdone | 恒 1：bs 始终接受 `block_done` |
-| `bs_top_done` | 输出 | 1 | 顶层 | grid 结束，锁存输出（intf_spec §1.6） |
-
-`bs_sf_launch` 与 `bs_ws_launch` 同拍发起，两侧均握手成功后块启动完成（intf_spec §4）。
+- `bs_cfg_n`（输入，32 位）：本规范增设的模块级配置输入，供给 N（每块线程总数），复位释放前生效并保持静态，见 §3；
+- `bs_ws_bdone_rdy` 恒 1：bs 始终接受 `block_done`（§5.2、§8）。
 
 ---
 
 ## 3. 参数与配置
 
-| 参数 | 默认 | 含义 |
+| 参数 | 基线值 | 含义 |
 |---|---|---|
 | `DATA_W` | 32 | 数据/地址/载荷位宽（intf_spec §1.4） |
 | `NWARPS` | 4 | warp 数/块（ma_spec §1.2） |
