@@ -2,6 +2,7 @@
 
 版本：v0.1（规范文档；v0.2 重构：宏观内容收拢至第 1 节，模块逐节成文）
 日期：2026-08-25
+勘误记录：2026-08-30 `sf_ialu_issue` 载荷增设 `opc` 向量（R3 型 IMAD 第三源，8×32b；见 `top/cmodel/sim_common.h` 偏差 C5，§2）。
 适用范围：本文档定义 easy_simt SIMT 处理器 v1 的**模块级接口**：端口命名规则、vld/rdy 握手协议、全部模块间通道的信号级定义、`memif` 对外 AXI4 总线约定与顶层信号。上游依据为同目录 `ma_spec_v0.1.md`（顶层微架构规范）与 `isa_spec_v0.1.md`（ISA 规范）。本文档是各模块端口定义文档与 `top` 连线的直接依据。
 
 ---
@@ -153,7 +154,7 @@
 | `sf_{ialu,falu,lsu}_wbdone_rdy` | 输出 | 1 | *_sf_wbdone |
 | `sf_top_err` | 输出 | 1 | 顶层 |
 
-issue 载荷（sf 为源）：`sf_ialu_issue_{opcode,rd,warp_id,lane_mask,pc,opa,opb,imm}`；`sf_falu_issue_{opcode,rd,warp_id,lane_mask,opa,opb}`；`sf_lsu_issue_{opcode,rd,warp_id,lane_mask,opa,imm,shbase}`。其中 `opa/opb` 为 NLANES×DATA_W，`lane_mask` 为发射时 active mask 快照、随路至写回。`sf_ws_stall`/`sf_ws_bar` 为提示性状态同步，正确性由 `ws_sf_grant` 握手兜底（sf 以 `grant_rdy=0` 拒收不可发射的 warp）。
+issue 载荷（sf 为源）：`sf_ialu_issue_{opcode,rd,warp_id,lane_mask,pc,opa,opb,opc,imm}`；`sf_falu_issue_{opcode,rd,warp_id,lane_mask,opa,opb}`；`sf_lsu_issue_{opcode,rd,warp_id,lane_mask,opa,imm,shbase}`。其中 `opa/opb/opc` 为 NLANES×DATA_W（`opc` 仅 ialu 携带，为 R3 型 IMAD 第三源，见勘误记录），`lane_mask` 为发射时 active mask 快照、随路至写回。`sf_ws_stall`/`sf_ws_bar` 为提示性状态同步，正确性由 `ws_sf_grant` 握手兜底（sf 以 `grant_rdy=0` 拒收不可发射的 warp）。
 
 ## 3. ws — Warp Scheduler 端口
 
