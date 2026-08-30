@@ -2,7 +2,7 @@
 
 版本：v0.1（规范文档，基线已冻结；v0.2 重构：宏观内容收拢至第 1 节，模块逐节成文）
 日期：2026-08-25
-修订记录：2026-08-25 分支处理改为**取指阻塞式**（原为"顺序流取指 + taken 冲刷"）：无预测无冲刷，预测+冲刷降为预留优化项；`stall_reason` 去除 `FLUSH`、新增 `BRSTALL`；`BR_PRED` 语义同步更新。
+修订记录：2026-08-25 分支处理改为**取指阻塞式**（原为"顺序流取指 + taken 冲刷"）：无预测无冲刷，预测+冲刷降为预留优化项；`stall_reason` 去除 `FLUSH`、新增 `BRSTALL`；`BR_PRED` 语义同步更新。2026-08-30 warp 调度策略改为**单 warp 独占、阻塞至完成**（原为按 warp id 顺序轮转交织）：在途至多一个 warp，停顿期整机阻塞不切换，仅 `bar.sync` 到达与 `ret` 结束回合；交织降为预留优化项，`WS_POLICY` 语义同步更新（§1.1、§1.3、§1.4、§1.6、§3）。`top/cmodel/ws.c` 暂保留旧轮转策略，随 ws 模块实现一并切换。
 适用范围：本文档定义 easy_simt SIMT 处理器的**顶层微架构**：模块划分、职责边界、模块间接口、调度与分化控制机制、存储子系统策略及参数总表。架构状态与指令语义见同目录 `isa_spec_v0.1.md`（ISA 规范），二者共同构成 RTL 实现与验证的依据。信号级端口定义见同目录 `intf_spec_v0.1.md`（接口规范）。
 
 ---
@@ -17,7 +17,7 @@ Golden kernel 语义回顾（硬件版参数）：N=1000，grid=32 块 × 32 线
 
 **设计宪章：一切最简，能顺序就顺序，能阻塞就阻塞。** 基线的判据是"正确所必需"：每一处与性能相关的机制都以参数位形式存在、默认取最简值。按此定位，后续对原型的**任何改动都构成一次可单独量化收益的优化**（如 coalesce、bank 并行、转发、多块并发等），这也是本项目的演进路线。
 
-据此宪章，v1 明确**不做**：转发/旁路（纯互锁）、分支预测与冲刷（分支阻塞取指）、coalesce（8-bank 按字偏移天然分流，仅跨行才串行）、写回/写分配（写直通不分配）、多块并发（`MAX_BLOCKS_INFLIGHT=1`）、例外与中断（非法指令挂起并报错误标志，仅供调试）。
+据此宪章，v1 明确**不做**：转发/旁路（纯互锁）、分支预测与冲刷（分支阻塞取指）、coalesce（8-bank 按字偏移天然分流，仅跨行才串行）、写回/写分配（写直通不分配）、多块并发（`MAX_BLOCKS_INFLIGHT=1`）、warp 交织发射（在途单 warp，停顿期整机阻塞而非换发其它 warp，见 §3）、例外与中断（非法指令挂起并报错误标志，仅供调试）。
 
 ### 1.2 总体配置
 
@@ -27,6 +27,7 @@ Golden kernel 语义回顾（硬件版参数）：N=1000，grid=32 块 × 32 线
 | warp 数/块 | 4 | `NWARPS=4`，warp id 0..3 |
 | 线程数/块 | 32 | 8×4 |
 | 块执行方式 | 串行 | `MAX_BLOCKS_INFLIGHT=1`，多块并发留参数位 |
+| warp 执行方式 | 串行独占 | 在途单 warp，阻塞至完成；仅 `bar.sync`/`ret` 结束回合（`WS_POLICY`，§3） |
 | 架构寄存器 | 32 × 32b | R0 恒零；每 lane 独立副本 |
 | 分化栈深度 | 4 | 每 warp 独立 |
 | BRT 表项数 | 4 | 汇编器提供重聚点；黄金程序用 3 项 |
@@ -42,17 +43,18 @@ Golden kernel 语义回顾（硬件版参数）：N=1000，grid=32 块 × 32 线
 
 约定：
 
+- **单 warp 独占、阻塞至完成**。任一时刻至多一个 warp 在途；其停顿（冒险/缺失/分支决议）由整机等待，不切换 warp；仅 `bar.sync` 到达与 `ret` 结束回合（§3）。以交织发射隐藏延迟是预留优化项。
 - **互锁不转发**。数据冒险一律停顿，直到写回完成（记分板清除）后重新发射。转发是第一优化项。
 - **无分支预测、无冲刷**。遇分支即阻塞取指，等 ialu 决议完成（出 taken 向量 → sf 定出下一 PC）再取下一条；不存在错误路径指令与冲刷控制。每条分支付出确定性前端停顿（量级约 2 拍）；预测+冲刷为预留优化项（见 §1.6 `BR_PRED`）。
 - **阻塞式存储**。任何缺失都停顿发起方（warp 停），不设在途请求表（MSHR）。
-- 单发射顺序执行下，写回竞争只可能来自"另一 warp 的 ALU 结果"与"本 warp 装载返回"同拍到达，由写口固定优先级仲裁（见 §11 rf）。
+- 在途至多一个 warp 且装载阻塞发射，三源写回不会同拍到达；写口固定优先级仲裁仅作结构正确性兜底（见 §11 rf）。
 
 ### 1.4 模块清单与职责
 
 | 模块 | 缩写 | 职责 | 边界说明 | 章节 |
 |---|---|---|---|---|
 | SIMT Frontend | sf | 每 warp 一份 PC；取指发起；定长译码、立即数扩展、`ld.param`；冒险检测与互锁记分板；issue 分派；SIMT 控制（active mask、分化栈、BRT、mask 更新、PC 重定向） | 分支的**判定**在 ialu，**处置**（压栈/换 mask/重定向）在 sf | §2 |
-| Warp Scheduler | ws | 按 warp id 顺序选发射；汇聚停顿源；`bar.sync` 到达计数与统一释放；块完成判定（4 warp 全 `ret`） | 只管 warp 粒度行为，不碰块级决策 | §3 |
+| Warp Scheduler | ws | 单 warp 独占、阻塞至完成；汇聚停顿源；`bar.sync` 到达计数与统一释放；块完成判定（4 warp 全 `ret`） | 只管 warp 粒度行为，不碰块级决策 | §3 |
 | Block Scheduler | bs | 纯块派发：推进 grid、下发启动上下文 `{blockIdx, N, SHBASE}`、收 `block_done` 拉下一块；`MAX_BLOCKS_INFLIGHT`/SHBASE 分区逻辑的归属 | 不做屏障、不碰每周期行为 | §4 |
 | 整数 ALU | ialu | IADD/SHL/XOR/mad.lo.s32/setp；分支解析（每 lane taken 向量、目标、BRT 表项）回注 sf | setp 产每 lane 谓词，直接喂分支判定 | §5 |
 | 浮点 ALU | falu | FMUL/FADD/FNEG，IEEE-754 binary32，RN 舍入 | 8 lane 并行、锁步 | §6 |
@@ -69,7 +71,7 @@ flowchart TB
   subgraph CTRL["控制前端"]
     direction LR
     bs["bs · Block Scheduler<br/>grid推进 / 块派发 / 下发blockIdx,N,SHBASE<br/>MAX_BLOCKS_INFLIGHT / SHBASE分区"]
-    ws["ws · Warp Scheduler<br/>按warp id顺序向下选 / 停顿汇聚<br/>bar.sync到达计数 / 凑齐统一释放"]
+    ws["ws · Warp Scheduler<br/>单warp独占 / 阻塞至屏障或完成 / 停顿汇聚<br/>bar.sync到达计数 / 凑齐统一释放"]
     sf["sf · SIMT Frontend<br/>PC堆 / 取指 / 译码 / 互锁记分板 / issue<br/>active mask / 分化栈深4 / BRT"]
   end
 
@@ -142,7 +144,7 @@ flowchart TB
 | `NLANES` | 8 | lane/warp | — |
 | `NWARPS` | 4 | warp/块 | — |
 | `MAX_BLOCKS_INFLIGHT` | 1 | 并发块数 | 多块并发 |
-| `WS_POLICY` | ID_ORDER | warp 选择策略（warp id 顺序轮转） | — |
+| `WS_POLICY` | RUN_TO_DONE | warp 选择策略（单 warp 独占，阻塞至屏障或完成，§3） | 交织轮转（延迟隐藏） |
 | `DIV_STACK_DEPTH` | 4 | 分化栈深 | — |
 | `BRT_ENTRIES` | 4 | 重聚表表项 | — |
 | `ILINE_B` | 32 | 指令行字节数 | — |
@@ -192,9 +194,16 @@ V3 与 32-lane 基线"全分化"的差异纯属粒度效应：8 lane 下部分 w
 
 ## 3. ws — Warp Scheduler
 
-**职责**：只管 warp 粒度行为，不碰块级决策。按 warp id 顺序选发射；汇聚停顿源；`bar.sync` 到达计数与统一释放；块完成判定。
+**职责**：只管 warp 粒度行为，不碰块级决策。单 warp 独占、阻塞至完成；汇聚停顿源；`bar.sync` 到达计数与统一释放；块完成判定。
 
-**选择策略**：维护 2 位轮转指针，自指针位置起找第一个可发射（无停顿源）的 warp 发射，发射后指针推进。无年龄表、无策略表，按 warp id 顺序轮转。
+**调度策略（`WS_POLICY = RUN_TO_DONE`）**：任一时刻至多一个 warp 在途，`ws_sf_grant` 只授予当前 warp，该 warp 独占执行。回合仅在两种情况下结束，随后按 warp id 顺序推进到下一个可发射的 warp：
+
+1. warp 执行 `ret`：置 DONE，推进到下一个非 DONE 的 warp；
+2. warp 到达 `bar.sync`：置 BARRIER，推进到下一个非 DONE 且非 BARRIER 的 warp——屏障的等待条件只能由后续 warp 到达满足，此切换为被迫而非主动。
+
+其余停顿原因（HAZARD、IMISS、LMISS、BRSTALL）一律不切换：整机阻塞等待当前 warp 恢复可发射（§1.3）。
+
+**起步与屏障恢复**：块启动后自 warp 0 开始；屏障凑齐释放后，自等待中 id 最小的 warp 恢复发射，仍按上述策略执行。块内推进序列完全确定：无轮转指针、无年龄表、无策略表。
 
 **停顿源枚举**：`stall_reason ∈ { NONE, HAZARD, IMISS, LMISS, BARRIER, BRSTALL, DONE }`，对每 warp 汇聚各来源：HAZARD（sf 记分板互锁）、IMISS（sf 转发取指缺失）、LMISS（lsu 上报数据缺失）、BARRIER（等屏障）、BRSTALL（分支决议中）、DONE（已 `ret`）。
 
