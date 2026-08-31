@@ -19,10 +19,8 @@ module falu #(
     parameter OPCODE_W = 5,               // 操作码位宽（intf_spec §1.4）
     localparam WARP_IW = (NWARPS > 1) ? $clog2(NWARPS) : 1,
     localparam VEC_W   = NLANES * DATA_W,
-    // ---- binary32 数值通路位宽（由格式定死，见 falu_spec §3/§5） ----
-    localparam ALN_MAX = 276,             // 对齐移位上限：q 域 [-172,104] 全幅差
-    localparam ALN_W   = 24 + ALN_MAX,    // 对齐后尾数宽度（300）
-    localparam MW      = ALN_W + 1        // 精确和差宽度（301）
+    // ---- FADD 和差位宽：50 位定点场（尾数 24 位 + 小数扩展 25 位 + 余量 1 位）+ 进位 1 位 ----
+    localparam MW      = 51
 ) (
     input  wire                  clk,
     input  wire                  rst_n,
@@ -180,48 +178,60 @@ module falu #(
             wire [31:0] canon_a = a_den ? {a_sg, 31'd0} : a;
             wire [31:0] canon_b = b_den ? {b_sg, 31'd0} : b;
 
-            // 对齐：q = max(A.q,B.q)，X = A.mant << db，Y = B.mant << da
+            // 对齐（50 位定点场，标度 2^(q_max-25)）：较大者置于 [48:25]，
+            // 较小者按真实指数差右移；移出场的位全部或进对齐 sticky
             wire signed [11:0] q_max = (a_q > b_q) ? a_q : b_q;
-            wire [8:0] da = q_max - a_q;
-            wire [8:0] db = q_max - b_q;
-            wire [ALN_W-1:0] X = {{ALN_MAX{1'b0}}, a_mant} << db;
-            wire [ALN_W-1:0] Y = {{ALN_MAX{1'b0}}, b_mant} << da;
+            wire [8:0] delta = (a_q >= b_q) ? (a_q - b_q) : (b_q - a_q);
+            wire        a_ge_b = (a_q > b_q) || ((a_q == b_q) && (a_mant >= b_mant));
+            wire [23:0] lg_mant = a_ge_b ? a_mant : b_mant;
+            wire [23:0] sm_mant = a_ge_b ? b_mant : a_mant;
+            wire [MW-2:0] L50 = {1'b0, lg_mant, 25'd0};
+            wire [MW-2:0] S50 = {1'b0, sm_mant, 25'd0} >> delta;
+
+            // 对齐 sticky：被右移出场的尾数位（sm 的低 n_lost 位）
+            wire [8:0] nl9 = delta - 9'd25;
+            wire [4:0] n_lost = (delta <= 9'd25) ? 5'd0
+                              : (delta >= 9'd49) ? 5'd24
+                              : nl9[4:0];
+            wire [23:0] sm_lo_mask = {24{1'b1}} >> (5'd24 - n_lost);
+            wire        sticky_al  = |(sm_mant & sm_lo_mask);
 
             wire        same_sg = (a_sg == b_sg);
-            wire        x_eq_y  = (X == Y);
-            wire [MW-1:0] M = same_sg ? ({1'b0, X} + {1'b0, Y})
-                            : (X >= Y) ? ({1'b0, X} - {1'b0, Y})
-                            :            ({1'b0, Y} - {1'b0, X});
-            wire add_sg = same_sg ? a_sg : (X >= Y ? a_sg : b_sg);
+            wire [MW-1:0] M_sum = same_sg ? ({1'b0, L50} + {1'b0, S50})
+                                          : ({1'b0, L50} - {1'b0, S50});
+            // 异号且有对齐丢失位：真值 = M_sum - D（0<D<1 场单位），
+            // 按 (M_sum-1) 的整数部分舍入，丢失量并入最终 sticky
+            wire [MW-1:0] M = (~same_sg && sticky_al) ? (M_sum - {{(MW-1){1'b0}}, 1'b1})
+                                                      : M_sum;
+            wire add_sg = same_sg ? a_sg : (a_ge_b ? a_sg : b_sg);
+            wire m_zero = (M_sum == {MW{1'b0}});   // 精确抵消 -> +0（该情形 sticky_al 必 0）
 
-            // 单舍入：rne_big（M * 2^(q - da - db)，M != 0）
-            wire [8:0] lz_m    = hiM(M);
-            wire       lz_ge23 = (lz_m >= 9'd23);
-            wire [8:0] shift_r = lz_ge23 ? (lz_m - 9'd23) : 9'd0;
-            wire [8:0] s1      = (lz_m >= 9'd24) ? (lz_m - 9'd24) : 9'd0; // max(shift-1,0)
+            // 单舍入（M != 0；定点标度：value = M * 2^(q_max - 25)）
+            wire [5:0] lz_m    = hiM(M);
+            wire       lz_ge23 = (lz_m >= 6'd23);
+            wire [5:0] shift_r = lz_ge23 ? (lz_m - 6'd23) : 6'd0;
+            wire [5:0] s1      = (lz_m >= 6'd24) ? (lz_m - 6'd24) : 6'd0; // max(shift-1,0)
             wire [MW-1:0] Ms  = M >> shift_r;
             wire [MW-1:0] Ms1 = M >> s1;
             wire [23:0] a_keep  = Ms[23:0];
-            wire        a_guard = lz_ge23 && (shift_r != 9'd0) && Ms1[0];
+            wire        a_guard = lz_ge23 && (shift_r != 6'd0) && Ms1[0];
             wire [MW-1:0] lo_mask = {MW{1'b1}} >> (MW - s1);  // 低 s1 位置 1
-            wire        a_stky  = |(M & lo_mask);
+            wire        a_stky  = (|(M & lo_mask)) | sticky_al;
             wire        a_rup   = a_guard && (a_stky || a_keep[0]);
             wire [24:0] a_manr  = {1'b0, a_keep} + {24'd0, a_rup};
             wire        a_cy    = a_manr[24];
             wire [23:0] a_manhi = a_cy ? a_manr[24:1] : a_manr[23:0];
 
-            wire signed [12:0] qe   = {a_q[11], a_q} + {b_q[11], b_q}
-                                      - {q_max[11], q_max};
-            wire signed [12:0] qq0  = qe + $signed({4'b0, shift_r});
-            wire signed [12:0] qq   = a_cy ? qq0 + 13'sd1 : qq0;
-            // lz < 23：左移对齐，无舍入
-            wire [8:0]  lshift  = 9'd23 - lz_m;
+            // qq = q_max + lz - 48（lz >= 23 与 lz < 23 两支统一，含进位 +1）
+            wire signed [12:0] qq0 = {q_max[11], q_max}
+                                     + $signed({7'b0, lz_m}) - 13'sd48;
+            wire signed [12:0] qq  = a_cy ? qq0 + 13'sd1 : qq0;
+            // lz < 23：左移对齐，无舍入（深抵消仅发生在 delta <= 1，sticky_al 必 0）
+            wire [5:0]  lshift  = 6'd23 - lz_m;
             wire [23:0] a_manlo = M[23:0] << lshift;
-            wire signed [12:0] qq_lo = qe - $signed({4'b0, lshift});
 
             wire [23:0] a_manf = lz_ge23 ? a_manhi : a_manlo;
-            wire signed [12:0] q_f = lz_ge23 ? qq : qq_lo;
-            wire signed [13:0] a_e = {q_f[12], q_f} + 14'sd150;
+            wire signed [13:0] a_e = {qq[12], qq} + 14'sd150;
             wire [31:0] add_norm = (a_e >= 14'sd255) ? {add_sg, 31'h7F800000}
                                  : (a_e <= 14'sd0)   ? {add_sg, 31'd0}
                                  : {add_sg, a_e[7:0], a_manf[22:0]};
@@ -233,7 +243,7 @@ module falu #(
                               : (a_zero && b_zero) ? {(a_sg & b_sg), 31'd0}
                               : a_zero ? canon_b
                               : b_zero ? canon_a
-                              : (~same_sg && x_eq_y) ? 32'd0
+                              : (~same_sg && m_zero) ? 32'd0
                               : add_norm;
 
             // ---- FNEG（§5.5） ----
