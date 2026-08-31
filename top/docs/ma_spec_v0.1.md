@@ -258,7 +258,7 @@ V3 与 32-lane 基线"全分化"的差异纯属粒度效应：8 lane 下部分 w
 
 **接口**：收 `sf_falu_issue`；发 `falu_rf_wb{wdata}`、`falu_sf_wbdone{warp_id,rd}`。
 
-**信号级端口与模块级规范**：信号级端口见 intf_spec §6；模块级规范未成文，当前参考实现为 `top/cmodel/falu.c`。
+**信号级端口与模块级规范**：信号级端口见 intf_spec §6；模块级规范见 `submodules/falu/docs/falu_spec_v0.1.md`。
 
 ## 7. lsu — Load/Store Unit
 
