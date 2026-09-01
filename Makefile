@@ -11,6 +11,7 @@
 #
 #  已实现：C 事务级模型（top/cmodel/）编译与黄金回归（make cmodel [run]）；
 #          内核镜像自 top/kernel/*.cu 全链生成（make kernel）；
+#          SRAM 宏单元生成（OpenRAM，make sram，产物落 tmp/sram/）；
 #          RTL 仿真与门级仿真（Verilator 单路线，make rtl/netlist [run|gui] <模块>）；
 #          门级综合（Yosys + nangate45，make syn <模块>）
 #  预留（均只跑顶层）：面积、门级仿真波形（供 power 使用）、功耗（网表+波形）、
@@ -29,6 +30,7 @@
 #    make cmodel            编译模型库 + 回归可执行（-> tmp/build/sim/）
 #    make cmodel run        编译并执行模型黄金回归（默认 N=1000 WARPS=4 LANES=8 MEMLAT=20）
 #    make kernel            自 top/kernel/*.cu 生成内核镜像到 tmp/kernel/（.ptx/.hex/.json/.lst）
+#    make sram              生成项目所需的全部 SRAM 宏（OpenRAM，产物落 tmp/sram/）
 #    make rtl <模块>        RTL 仿真编译（Verilator 编译 RTL + C++ harness）
 #    make rtl run <模块>    RTL 仿真执行（对 C 参考模型事务级比对，判据 VSIM PASS）
 #    make rtl gui <模块>    RTL 仿真执行并拉起 gtkwave 看 VCD
@@ -70,6 +72,16 @@ PY       ?= python3
 # PTX 目标架构（与 ma_spec 硬件口径一致：.target sm_70）
 PTX_ARCH ?= sm_70
 
+# ---- SRAM 宏（OpenRAM 生成；产物落 tmp/sram/，不入库）----
+# 宏清单：<名>:<字宽>:<字数>:<RW 口数>:<工艺>，
+# 名遵循 OpenRAM 命名 sram_<rw>rw<r>r<w>w_<字宽>_<字数>_<工艺>。
+# 当前项目仅 rf 需要一种形状（8 lane × 镜像对共 16 宏，见
+# submodules/rf/rtl/rf.sv 头注）。
+SRAM_DIR  := $(TMP)/sram
+SRAM_MACROS := sram_2rw0r0w_32_128_freepdk45:32:128:2:freepdk45
+# 各模块所需宏（<模块>_SRAMS）：make rtl/netlist 编译前检查，缺失先 make sram
+rf_SRAMS := sram_2rw0r0w_32_128_freepdk45
+
 # ---- 硬件子模块清单（与 ma_spec §1.4 一致；每个模块目录镜像 docs/rtl/tb）----
 MODULES := sf ws bs ialu falu lsu icache l1sm memif rf
 
@@ -93,7 +105,7 @@ RUN_IT := $(filter run,$(MAKECMDGOALS))
 # 原生转储 VCD）并拉起 gtkwave 查看
 GUI_IT := $(filter gui,$(MAKECMDGOALS))
 
-.PHONY: all cmodel kernel sim_run clean deps help \
+.PHONY: all cmodel kernel sram sim_run clean deps help \
         syn netlist area wave power perf rtl \
         $(MODULES) run gui
 
@@ -152,6 +164,52 @@ $(KERNEL_HEX): $(KERNEL_PTX) $(ASSEMBLER) | $(KERNEL_DIR)
 	$(PY) $(ASSEMBLER) $(KERNEL_PTX) -o $(KERNEL_DIR)
 
 # ===========================================================================
+#  SRAM 宏生成（OpenRAM，产物落 tmp/sram/，不入库）：
+#    make sram   生成 SRAM_MACROS 清单中的全部宏，产物落 $(SRAM_DIR)/<名>/
+#                （gds/lef/lib/v/sp 等）；已生成则跳过。
+#  需 make deps 已装 OpenRAM；OPENRAM_HOME / OPENRAM_TECH / PYTHONPATH 由本
+#  目标内联组装，不依赖 source setup.sh。宏的行为模型（<名>.v）供
+#  make rtl/netlist 编译使用（见 <模块>_SRAMS 检查）。
+# ===========================================================================
+sram:
+	@[ -f $(CURDIR)/$(THIRD_PARTY)/openram/sram_compiler.py ] || { \
+	  echo "OpenRAM 未安装（third_party/openram），请先 make deps"; exit 1; }; \
+	command -v python3 >/dev/null 2>&1 || { echo "未找到 python3"; exit 1; }; \
+	mkdir -p $(CURDIR)/$(SRAM_DIR); \
+	OROOT=$(CURDIR)/$(THIRD_PARTY)/openram; \
+	for m in $(SRAM_MACROS); do \
+	  shape=$$(echo $$m | cut -d: -f1); ws=$$(echo $$m | cut -d: -f2); \
+	  nw=$$(echo $$m | cut -d: -f3); rw=$$(echo $$m | cut -d: -f4); tech=$$(echo $$m | cut -d: -f5); \
+	  if [ -f $(CURDIR)/$(SRAM_DIR)/$$shape/$$shape.v ]; then \
+	    echo "$(SRAM_DIR)/$$shape 已存在，跳过生成"; continue; \
+	  fi; \
+	  echo "== 生成 SRAM 宏 $$shape =="; \
+	  mkdir -p $(CURDIR)/$(SRAM_DIR)/$$shape; \
+	  { echo "# make sram 现场生成，勿手改"; \
+	    echo "use_nix = False"; \
+	    echo "word_size = $$ws"; \
+	    echo "num_words = $$nw"; \
+	    echo "num_rw_ports = $$rw"; \
+	    echo "num_r_ports = 0"; \
+	    echo "num_w_ports = 0"; \
+	    echo "tech_name = \"$$tech\""; \
+	    echo "nominal_corner_only = True"; \
+	    echo "process_corners = [\"TT\"]"; \
+	    echo "supply_voltages = [1.0]"; \
+	    echo "temperatures = [25]"; \
+	    echo "route_supplies = False"; \
+	    echo "check_lvsdrc = False"; \
+	    echo "output_name = \"$$shape\""; \
+	    echo "output_path = \".\""; \
+	  } > $(CURDIR)/$(SRAM_DIR)/$$shape/$$shape.py; \
+	  (cd $(CURDIR)/$(SRAM_DIR)/$$shape && \
+	   OPENRAM_HOME=$$OROOT/compiler OPENRAM_TECH=$$OROOT/technology \
+	   PYTHONPATH=$$OROOT/compiler \
+	   python3 $$OROOT/sram_compiler.py $$shape.py) || exit 1; \
+	  echo "$$shape 生成完成：产物落 $(SRAM_DIR)/$$shape/"; \
+	done
+
+# ===========================================================================
 #  RTL 仿真（Verilator，开源单路线）：
 #    make rtl <模块>       仅编译（Verilator 把 RTL 编译为 C++ 并链接 harness）
 #    make rtl run <模块>   编译并执行；harness tb_<模块>_vsim.cpp 驱动时钟与
@@ -173,10 +231,22 @@ rtl:
 	    VBIN="$(CURDIR)/third_party/oss-cad-suite/bin/verilator"; \
 	  elif command -v verilator >/dev/null 2>&1; then VBIN=verilator; \
 	  else echo "未找到 verilator（third_party/oss-cad-suite 或 PATH）"; exit 1; fi; \
+	  NEED_SRAMS="$(strip $($(MOD)_SRAMS))"; SRAM_FILES=""; \
+	  if [ -n "$$NEED_SRAMS" ]; then \
+	    NEED_GEN=""; \
+	    for s in $$NEED_SRAMS; do \
+	      SRAM_FILES="$$SRAM_FILES $(CURDIR)/$(SRAM_DIR)/$$s/$$s.v"; \
+	      [ -f $(CURDIR)/$(SRAM_DIR)/$$s/$$s.v ] || NEED_GEN=1; \
+	    done; \
+	    if [ -n "$$NEED_GEN" ]; then \
+	      echo "$(MOD) 所需 SRAM 宏缺失，先执行 make sram"; \
+	      $(MAKE) -C $(CURDIR) --no-print-directory sram || exit 1; \
+	    fi; \
+	  fi; \
 	  RTL_FILES="$$(ls $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/rtl/*.sv 2>/dev/null)"; \
 	  [ -n "$$RTL_FILES" ] || { echo "$(MOD)/rtl/ 下无 RTL"; exit 1; }; \
 	  $$VBIN --exe --cc --trace --no-timing -Wno-fatal --top-module $(MOD) -Mdir . -o vsim_$(MOD) \
-	    $$RTL_FILES \
+	    $$RTL_FILES $$SRAM_FILES \
 	    $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/tb/tb_$(MOD)_vsim.cpp \
 	    $(addprefix $(CURDIR)/,$(CORE_SRCS)) \
 	    -CFLAGS "-I$(CURDIR)/$(SIM_DIR)" || exit 1; \
@@ -224,6 +294,9 @@ syn:
 	  $(YOSYS_FIND); \
 	  RTL_FILES="$$(ls $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/rtl/*.sv 2>/dev/null)"; \
 	  [ -n "$$RTL_FILES" ] || { echo "$(MOD)/rtl/ 下无 RTL"; exit 1; }; \
+	  if [ -n "$(strip $($(MOD)_SRAMS))" ]; then \
+	    echo "注：$(MOD) 含 SRAM 宏（$(strip $($(MOD)_SRAMS))），yosys 按黑盒处理，宏面积另行计入（产物见 $(SRAM_DIR)/）"; \
+	  fi; \
 	  DONT_USE=$$(sed -n 's/^export DONT_USE_CELLS = //p' $(PDK_ROOT)/nangate45/config.mk); \
 	  DU_FLAGS=""; for c in $$DONT_USE; do DU_FLAGS="$$DU_FLAGS -dont_use $$c"; done; \
 	  SDC_FILE="$(CURDIR)/$(TOP)/sdc/common.sdc"; \
@@ -284,9 +357,21 @@ netlist:
 	    VBIN="$(CURDIR)/third_party/oss-cad-suite/bin/verilator"; \
 	  elif command -v verilator >/dev/null 2>&1; then VBIN=verilator; \
 	  else echo "未找到 verilator（third_party/oss-cad-suite 或 PATH）"; exit 1; fi; \
-	  $$VBIN --exe --cc --trace -Wno-fatal --top-module $(MOD) -Mdir . -o vsim_$(MOD) \
+	  NEED_SRAMS="$(strip $($(MOD)_SRAMS))"; SRAM_FILES=""; \
+	  if [ -n "$$NEED_SRAMS" ]; then \
+	    NEED_GEN=""; \
+	    for s in $$NEED_SRAMS; do \
+	      SRAM_FILES="$$SRAM_FILES $(CURDIR)/$(SRAM_DIR)/$$s/$$s.v"; \
+	      [ -f $(CURDIR)/$(SRAM_DIR)/$$s/$$s.v ] || NEED_GEN=1; \
+	    done; \
+	    if [ -n "$$NEED_GEN" ]; then \
+	      echo "$(MOD) 所需 SRAM 宏缺失，先执行 make sram"; \
+	      $(MAKE) -C $(CURDIR) --no-print-directory sram || exit 1; \
+	    fi; \
+	  fi; \
+	  $$VBIN --exe --cc --trace --no-timing -Wno-fatal --top-module $(MOD) -Mdir . -o vsim_$(MOD) \
 	    $(CURDIR)/$(SYN_DIR)/$(MOD)/$(MOD)_netlist.v \
-	    $(CURDIR)/$(NETLIST_DIR)/cells_sim.v \
+	    $(CURDIR)/$(NETLIST_DIR)/cells_sim.v $$SRAM_FILES \
 	    $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/tb/tb_$(MOD)_vsim.cpp \
 	    $(addprefix $(CURDIR)/,$(CORE_SRCS)) \
 	    -CFLAGS "-I$(CURDIR)/$(SIM_DIR)" || exit 1; \
@@ -396,6 +481,7 @@ help:
 	@echo "  cmodel           编译事务级模型库"
 	@echo "  cmodel run       跑模型黄金回归"
 	@echo "  kernel           生成内核镜像"
+	@echo "  sram             生成项目所需 SRAM 宏（OpenRAM，产物落 tmp/sram/）"
 	@echo "  rtl <模块>       RTL 仿真编译"
 	@echo "  rtl run <模块>   RTL 仿真执行（对 C 参考模型事务级比对）"
 	@echo "  rtl gui <模块>   RTL 仿真执行并看波形"

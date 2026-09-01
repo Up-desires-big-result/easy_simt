@@ -67,6 +67,12 @@ SRAM 宏单元由 **OpenRAM** 生成：Python 编写的 SRAM 编译器，自带 
 joblib。环境变量 `OPENRAM_HOME`（指向 `compiler/`）、`OPENRAM_TECH`（指向
 `technology/`）与 `PYTHONPATH` 由 setup.sh 导出。
 
+宏生成统一走 `make sram`：按 Makefile 的形状清单（`SRAM_MACROS`）现场生成到
+`tmp/sram/<名>/`（已生成则跳过）；宏的行为模型（`<名>.v`）供 `make rtl` /
+`make netlist` 编译——需要宏的模块编译前自动检查，缺失先执行 `make sram`。
+当前仅 rf 需要一种形状（128 字 × 32 位、双 RW 口），以 8 lane × 镜像对共
+16 宏例化（见 `submodules/rf/rtl/rf.sv`）。
+
 两条已验证的前置：配置须设 `use_nix = False`（本机无 Nix，跳过 OpenRAM
 默认的 Nix 工具链自举）；`check_lvsdrc = False` 时不依赖 magic 即可产出
 上述全部文件。与工艺库内的 `fakeram45_*` 不同：后者是无真实比特单元的几何
@@ -90,6 +96,7 @@ easy_simt/
 ├── tmp/                     所有中间文件与报告（不入库；make clean 清空）
 │   ├── build/sim/           C 模型库 + 回归可执行
 │   ├── kernel/              easy_simt_kernel.{ptx,hex,json,lst}（make kernel 自 .cu 生成）
+│   ├── sram/                SRAM 宏产物（make sram 生成：gds/lef/lib/v/sp 等）
 │   ├── rtl/<模块>/          RTL 仿真产物（可执行 / 日志 / VCD 波形）
 │   ├── syn/<模块>/          门级综合产物（网表 / stat.rpt / syn.log / syn.ys）
 │   └── netlist/             门级仿真产物（cells_sim.v 与各模块可执行 / VCD 波形）
@@ -102,9 +109,9 @@ easy_simt/
 │   └── rtl/  tb/            顶层互连 RTL 与 testbench（预留）
 └── submodules/              10 个硬件子模块，与 top/ 同级
     └── <子模块>/  × 10      每个镜像 docs/ + rtl/ + tb/
-        ├── docs/            单元规范 <单元名>_spec.md（bs 已备，其余待补）
-        ├── rtl/             单元 RTL <单元名>.sv（bs 已备，其余待补）
-        └── tb/              单元 testbench tb_<单元名>_vsim.cpp（C++ harness，bs 已备，其余待补）
+        ├── docs/            单元规范 <单元名>_spec.md（bs/ialu/falu/rf 已备，其余待补）
+        ├── rtl/             单元 RTL <单元名>.sv（bs/ialu/falu/rf 已备，其余待补）
+        └── tb/              单元 testbench tb_<单元名>_vsim.cpp（C++ harness，bs/ialu/falu/rf 已备，其余待补）
 ```
 
 子模块位于 `submodules/` 下，与 `top/` 同级，各含 `docs/` + `rtl/` + `tb/`。
@@ -125,7 +132,9 @@ easy_simt/
 
 单元内命名：`rtl/<单元名>.sv`、`tb/tb_<单元名>_vsim.cpp`、`docs/<单元名>_spec.md`，
 单元名与目录名一致。模块职责与接口见 `top/docs/ma_spec_v0.1.md` §1.4 与
-`intf_spec_v0.1.md`。当前 `bs` 的 spec / RTL / testbench 三件套已备，其余模块待补。
+`intf_spec_v0.1.md`。当前 `bs`、`ialu`、`falu`、`rf` 的 spec / RTL / testbench
+三件套已备（其中 `rf` 的存储阵列为 OpenRAM SRAM 宏实现，见 `rf_spec`），
+其余模块待补。
 
 `top/` 兼作项目级工具目录：
 
@@ -167,6 +176,7 @@ numpy、scipy、scikit-learn、joblib，见「SRAM 宏单元生成器（OpenRAM�
 make cmodel             # 编译事务级模型库
 make cmodel run         # 跑模型黄金回归
 make kernel             # 生成内核镜像
+make sram               # 生成项目所需 SRAM 宏（产物落 tmp/sram/）
 make rtl <模块>         # RTL 仿真编译
 make rtl run <模块>     # RTL 仿真执行（对 C 参考模型事务级比对）
 make rtl gui <模块>     # RTL 仿真执行并看波形
