@@ -168,7 +168,9 @@ static void run_test(Vrf *top, VerilatedVcdC *tfp, const char *name,
     top->sf_rf_rddata_rdy = 0;
     for (int s = 0; s < 3; s++) drv_wb(top, s, 0, 0);
     top->clk = 0; top->eval(); if (tfp) tfp->dump(gtime++);
-    for (int i = 0; i < 5; i++) {
+    // 复位保持 70 拍：SRAM 宏版在复位期间做宏清零扫描（两口并行，共 64 拍），
+    // 保持 ≥64 拍方能扫全阵（寄存器版不受影响）
+    for (int i = 0; i < 70; i++) {
         if (top->rf_sf_rddata_vld)
             err("rddata vld not 0 during reset");
         top->clk = 1; top->eval(); if (tfp) tfp->dump(gtime++);

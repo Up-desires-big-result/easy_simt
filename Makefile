@@ -173,8 +173,10 @@ rtl:
 	    VBIN="$(CURDIR)/third_party/oss-cad-suite/bin/verilator"; \
 	  elif command -v verilator >/dev/null 2>&1; then VBIN=verilator; \
 	  else echo "未找到 verilator（third_party/oss-cad-suite 或 PATH）"; exit 1; fi; \
-	  $$VBIN --exe --cc --trace -Wno-fatal --top-module $(MOD) -Mdir . -o vsim_$(MOD) \
-	    $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/rtl/$(MOD).sv \
+	  RTL_FILES="$$(ls $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/rtl/*.sv 2>/dev/null)"; \
+	  [ -n "$$RTL_FILES" ] || { echo "$(MOD)/rtl/ 下无 RTL"; exit 1; }; \
+	  $$VBIN --exe --cc --trace --no-timing -Wno-fatal --top-module $(MOD) -Mdir . -o vsim_$(MOD) \
+	    $$RTL_FILES \
 	    $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/tb/tb_$(MOD)_vsim.cpp \
 	    $(addprefix $(CURDIR)/,$(CORE_SRCS)) \
 	    -CFLAGS "-I$(CURDIR)/$(SIM_DIR)" || exit 1; \
@@ -336,8 +338,9 @@ perf:
 # ===========================================================================
 #  第三方依赖（third_party/，内容不入库，.gitignore 忽略）
 #    make deps：一键拉取 GPGPU-Sim、OpenROAD-flow-scripts（仅 nangate45
-#    平台）与 OpenRAM（SRAM 宏单元生成器，自带 FreePDK45 工艺），并建
-#    nangate45 软链；完成后重新 source setup.sh 即导出
+#    平台）与 OpenRAM（SRAM 宏单元生成器，自带 FreePDK45 工艺），安装
+#    OpenRAM 的 Python 运行依赖，并建 nangate45 软链；完成后重新
+#    source setup.sh 即导出
 #    PDK_ROOT / GPGPU_SIM_ROOT / OPENRAM_HOME / OPENRAM_TECH。等价手动命令见 README「前置条件」。
 # ===========================================================================
 THIRD_PARTY := third_party
@@ -364,14 +367,19 @@ deps:
 	  git -C $(THIRD_PARTY)/orfs sparse-checkout set flow/platforms/nangate45 && \
 	  git -C $(THIRD_PARTY)/orfs checkout; \
 	fi
-	@if [ -f $(THIRD_PARTY)/openram/sram_compiler.py ] || [ -f $(THIRD_PARTY)/openram/openram.py ]; then \
+	@if [ -d $(THIRD_PARTY)/openram/.git ]; then \
 	  echo "third_party/openram 已存在，跳过克隆"; \
 	else \
-	  { git clone --depth 1 $(OPENRAM_URL) $(THIRD_PARTY)/openram || \
-	    { [ -d $$HOME/pdk/openram/.git ] && \
-	      echo "网络克隆失败，改自 ~/pdk/openram 本地克隆（--shared，对象经 alternates 引用）" && \
-	      git clone --shared $$HOME/pdk/openram $(THIRD_PARTY)/openram && \
-	      git -C $(THIRD_PARTY)/openram remote set-url origin $(OPENRAM_URL); }; }; \
+	  git clone $(OPENRAM_URL) $(THIRD_PARTY)/openram; \
+	fi
+	@if python3 -c "import numpy, scipy, sklearn, joblib" >/dev/null 2>&1; then \
+	  echo "OpenRAM 运行依赖已就绪（numpy / scipy / scikit-learn / joblib）"; \
+	elif python3 -m pip --version >/dev/null 2>&1; then \
+	  echo "安装 OpenRAM 运行依赖（pip install --user）"; \
+	  python3 -m pip install --user numpy scipy scikit-learn joblib; \
+	else \
+	  echo "提示：缺 OpenRAM 运行依赖（numpy / scipy / scikit-learn / joblib）且 pip 不可用，"; \
+	  echo "      请自行安装（如 sudo apt install python3-pip 后重跑 make deps）"; \
 	fi
 	ln -sfn orfs/flow/platforms/nangate45 $(THIRD_PARTY)/nangate45
 	@echo "deps 完成：重新 source setup.sh 后 PDK_ROOT / GPGPU_SIM_ROOT / OPENRAM_HOME / OPENRAM_TECH 指向 third_party/"
