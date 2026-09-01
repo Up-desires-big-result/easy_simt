@@ -4,13 +4,13 @@ Golden kernel 专用 SIMT 处理器（easy_simt）设计仓库。
 
 ## 前置条件
 
-两个第三方依赖（GPGPU-Sim、nangate45 工艺库）统一装在仓库内的
+三个第三方依赖（GPGPU-Sim、nangate45 工艺库、OpenRAM）统一装在仓库内的
 `third_party/`（内容不入库，`.gitignore` 忽略）：
 
 ```
 source setup.sh
 make deps              # 安装第三方依赖
-source setup.sh        # 重新 source，PDK_ROOT / GPGPU_SIM_ROOT 指向仓库内
+source setup.sh        # 重新 source，PDK_ROOT / GPGPU_SIM_ROOT / OPENRAM_HOME / OPENRAM_TECH 指向仓库内
 ```
 
 环境变量优先级：手动 export > 仓库内 `third_party/` > `~/pdk` 自动探测
@@ -57,6 +57,21 @@ yosys -p "read_liberty -lib $LIB; stat"      # Imported 135 cell types
   `cdl/NangateOpenCellLibrary.cdl`（135 个 `.SUBCKT`、0 个 `.model`，
   故只能做拓扑比对，不能做晶体管级仿真）。
 
+### SRAM 宏单元生成器（OpenRAM）
+
+SRAM 宏单元由 **OpenRAM** 生成：Python 编写的 SRAM 编译器，自带 FreePDK45
+工艺，按配置（位宽 / 容量 / bank 数）生成 GDS 版图、LEF 抽象、Liberty
+时序库、Verilog 模型、Spice 网表、LVS 网表与 datasheet。源码位于
+`third_party/openram`（`make deps` 拉取，当前为 stable 分支 1.2.49），入口
+脚本为 `sram_compiler.py`，运行依赖 python3 及 numpy、scipy、scikit-learn、
+joblib。环境变量 `OPENRAM_HOME`（指向 `compiler/`）、`OPENRAM_TECH`（指向
+`technology/`）与 `PYTHONPATH` 由 setup.sh 导出。
+
+两条已验证的前置：配置须设 `use_nix = False`（本机无 Nix，跳过 OpenRAM
+默认的 Nix 工具链自举）；`check_lvsdrc = False` 时不依赖 magic 即可产出
+上述全部文件。与工艺库内的 `fakeram45_*` 不同：后者是无真实比特单元的几何
+占位宏（仅 lib + lef、无 GDS），OpenRAM 产物为真实比特单元阵列。
+
 ## 仓库组织
 
 构建入口 `Makefile` 位于仓库根，与 `top/` 同级。每个硬件单元（`top` 及各子模块）
@@ -69,8 +84,8 @@ yosys -p "read_liberty -lib $LIB; stat"      # Imported 135 cell types
 ```
 easy_simt/
 ├── Makefile                 统一入口（仓库根，与 top/ 同级）
-├── setup.sh                 导出 PROJ_ROOT；依赖就位时导出 PDK_ROOT / GPGPU_SIM_ROOT
-├── third_party/             GPGPU-Sim + ORFS 安装位（make deps 拉取，内容不入库）
+├── setup.sh                 导出 PROJ_ROOT；依赖就位时导出 PDK_ROOT / GPGPU_SIM_ROOT / OPENRAM_HOME / OPENRAM_TECH
+├── third_party/             GPGPU-Sim + ORFS + OpenRAM 安装位（make deps 拉取，内容不入库）
 ├── README.md  LICENSE  .gitignore
 ├── tmp/                     所有中间文件与报告（不入库；make clean 清空）
 │   ├── build/sim/           C 模型库 + 回归可执行
@@ -137,12 +152,14 @@ source setup.sh
 ```
 
 导出 `PROJ_ROOT`（仓库根目录），供脚本路径引用；第三方依赖就位后
-`PDK_ROOT` / `GPGPU_SIM_ROOT` 自动指向仓库内 `third_party/`，也可在
-source 前自行 `export` 覆盖（手动优先）。
+`PDK_ROOT` / `GPGPU_SIM_ROOT` / `OPENRAM_HOME` / `OPENRAM_TECH` 自动指向仓库内
+`third_party/`，也可在 source 前自行 `export` 覆盖（手动优先）。
 
 ### Makefile（仓库根执行，产物统一落 `tmp/`）
 
 依赖：make、支持 C99 的 gcc；生成内核镜像另需 nvcc（CUDA）与 python3；
+生成 SRAM 宏单元另需 OpenRAM（`make deps` 就位，运行依赖 python3 及
+numpy、scipy、scikit-learn、joblib，见「SRAM 宏单元生成器（OpenRAM）」）；
 仿真为 Verilator、波形查看为 gtkwave、综合为 Yosys（三者均出自 oss-cad-suite，
 `make deps` 已随 third_party/ 就位）。
 

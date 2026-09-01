@@ -3,7 +3,8 @@
 # easy_simt 环境配置脚本（bash 版）
 # 用法:  source setup.sh        （路径任意，bash 会话内执行）
 # 效果:  设置 PROJ_ROOT 为 easy_simt 仓库根目录；
-#        third_party/ 内依赖就位时导出 PDK_ROOT / GPGPU_SIM_ROOT
+#        third_party/ 内依赖就位时导出
+#        PDK_ROOT / GPGPU_SIM_ROOT / OPENRAM_HOME / OPENRAM_TECH
 # 说明:  csh/tcsh 会话请改用  source setup.csh
 # =============================================================
 
@@ -37,7 +38,7 @@ unset _setup_dir _d _p _depth
 
 # ------------------------------------------------------------
 # third_party/：仓库内安装位（make deps 拉取，内容不入库）。
-# 目录就位时 PDK_ROOT / GPGPU_SIM_ROOT 指向仓库内；否则回退
+# 目录就位时 PDK_ROOT / GPGPU_SIM_ROOT / OPENRAM_HOME / OPENRAM_TECH 指向仓库内；否则回退
 # 旧逻辑（PDK_ROOT 自动探测 ~/pdk）。手动 export 永远优先。
 # ------------------------------------------------------------
 if [ -n "$PROJ_ROOT" ]; then
@@ -61,6 +62,25 @@ if [ -n "$PROJ_ROOT" ]; then
     if [ -z "$GPGPU_SIM_ROOT" ] && [ -d "$_tp/gpgpu-sim" ]; then
         export GPGPU_SIM_ROOT="$_tp/gpgpu-sim"
         echo "GPGPU_SIM_ROOT = $GPGPU_SIM_ROOT（third_party）"
+    fi
+
+    if [ -z "$OPENRAM_HOME" ] && [ -f "$_tp/openram/sram_compiler.py" ]; then
+        export OPENRAM_HOME="$_tp/openram/compiler"
+        echo "OPENRAM_HOME = $OPENRAM_HOME（third_party）"
+    fi
+
+    # OpenRAM 需 OPENRAM_HOME（compiler/）与 OPENRAM_TECH（technology/），
+    # 并把 OPENRAM_HOME 加进 PYTHONPATH（均幂等，手动 export 优先）
+    if [ -z "$OPENRAM_TECH" ] && [ -d "$_tp/openram/technology" ]; then
+        export OPENRAM_TECH="$_tp/openram/technology"
+        echo "OPENRAM_TECH = $OPENRAM_TECH（third_party）"
+    fi
+    if [ -n "$OPENRAM_HOME" ]; then
+        case ":$PYTHONPATH:" in
+            *":$OPENRAM_HOME:"*) ;;
+            *) PYTHONPATH="$OPENRAM_HOME${PYTHONPATH:+:$PYTHONPATH}"
+               export PYTHONPATH ;;
+        esac
     fi
 
     unset _tp

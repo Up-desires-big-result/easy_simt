@@ -335,13 +335,15 @@ perf:
 
 # ===========================================================================
 #  第三方依赖（third_party/，内容不入库，.gitignore 忽略）
-#    make deps：一键拉取 GPGPU-Sim 与 OpenROAD-flow-scripts（仅 nangate45
-#    平台），并建 nangate45 软链；完成后重新 source setup.sh 即导出
-#    PDK_ROOT / GPGPU_SIM_ROOT。等价手动命令见 README「前置条件」。
+#    make deps：一键拉取 GPGPU-Sim、OpenROAD-flow-scripts（仅 nangate45
+#    平台）与 OpenRAM（SRAM 宏单元生成器，自带 FreePDK45 工艺），并建
+#    nangate45 软链；完成后重新 source setup.sh 即导出
+#    PDK_ROOT / GPGPU_SIM_ROOT / OPENRAM_HOME / OPENRAM_TECH。等价手动命令见 README「前置条件」。
 # ===========================================================================
 THIRD_PARTY := third_party
 GPGPU_SIM_URL := https://github.com/gpgpu-sim/gpgpu-sim_distribution.git
 ORFS_URL := https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts.git
+OPENRAM_URL := https://github.com/VLSIDA/OpenRAM.git
 
 deps:
 	mkdir -p $(THIRD_PARTY)
@@ -362,8 +364,17 @@ deps:
 	  git -C $(THIRD_PARTY)/orfs sparse-checkout set flow/platforms/nangate45 && \
 	  git -C $(THIRD_PARTY)/orfs checkout; \
 	fi
+	@if [ -f $(THIRD_PARTY)/openram/sram_compiler.py ] || [ -f $(THIRD_PARTY)/openram/openram.py ]; then \
+	  echo "third_party/openram 已存在，跳过克隆"; \
+	else \
+	  { git clone --depth 1 $(OPENRAM_URL) $(THIRD_PARTY)/openram || \
+	    { [ -d $$HOME/pdk/openram/.git ] && \
+	      echo "网络克隆失败，改自 ~/pdk/openram 本地克隆（--shared，对象经 alternates 引用）" && \
+	      git clone --shared $$HOME/pdk/openram $(THIRD_PARTY)/openram && \
+	      git -C $(THIRD_PARTY)/openram remote set-url origin $(OPENRAM_URL); }; }; \
+	fi
 	ln -sfn orfs/flow/platforms/nangate45 $(THIRD_PARTY)/nangate45
-	@echo "deps 完成：重新 source setup.sh 后 PDK_ROOT / GPGPU_SIM_ROOT 指向 third_party/"
+	@echo "deps 完成：重新 source setup.sh 后 PDK_ROOT / GPGPU_SIM_ROOT / OPENRAM_HOME / OPENRAM_TECH 指向 third_party/"
 
 # ===========================================================================
 
