@@ -279,4 +279,4 @@ rf_falu_wb_rdy   0    0    1
 | F8 | `rf_sf_rd_rdy` 与背压 | 与在途应答状态一致（§1.4）；消费者 `rdy` 任意组合（恒 1、随机、周期图案，含长背压与零间隙背靠背）下 F1–F7 成立 |
 | F9 | 无死锁 | 全部事务在限界拍数内排空 |
 
-参考模型：testbench（Verilator C++ harness）直接链接 `top/cmodel`（`rf_step`），参考事务序列与 DUT 事务序列在线比对。宏以 OpenRAM 生成的行为模型参与仿真（`make sram` 产物，`tmp/sram/`）；testbench 复位保持 70 拍（覆盖 §8 清零扫描）。综合口径下宏按黑盒处理（yosys），宏面积按其 Liberty 另行计入。
+参考模型：testbench（Verilator C++ harness）直接链接 `top/cmodel`（`rf_step`），参考事务序列与 DUT 事务序列在线比对。仿真用宏行为模型为 OpenRAM 生成的负沿读写视图（`make sram` 产物，`tmp/sram/`）；testbench 复位保持 70 拍（覆盖 §8 清零扫描）。综合口径下宏随 RTL 一并综合：`submodules/rf/syn/` 提供同名上升沿综合视图（逐拍等效说明见该文件头注），`make syn` 前自动检查宏产物（缺失先 `make sram`）。

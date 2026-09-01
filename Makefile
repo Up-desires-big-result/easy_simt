@@ -79,7 +79,7 @@ PTX_ARCH ?= sm_70
 # submodules/rf/rtl/rf.sv 头注）。
 SRAM_DIR  := $(TMP)/sram
 SRAM_MACROS := sram_2rw0r0w_32_128_freepdk45:32:128:2:freepdk45
-# 各模块所需宏（<模块>_SRAMS）：make rtl/netlist 编译前检查，缺失先 make sram
+# 各模块所需宏（<模块>_SRAMS）：make rtl/netlist/syn 前检查，缺失先 make sram
 rf_SRAMS := sram_2rw0r0w_32_128_freepdk45
 
 # ---- 硬件子模块清单（与 ma_spec §1.4 一致；每个模块目录镜像 docs/rtl/tb）----
@@ -169,7 +169,9 @@ $(KERNEL_HEX): $(KERNEL_PTX) $(ASSEMBLER) | $(KERNEL_DIR)
 #                （gds/lef/lib/v/sp 等）；已生成则跳过。
 #  需 make deps 已装 OpenRAM；OPENRAM_HOME / OPENRAM_TECH / PYTHONPATH 由本
 #  目标内联组装，不依赖 source setup.sh。宏的行为模型（<名>.v）供
-#  make rtl/netlist 编译使用（见 <模块>_SRAMS 检查）。
+#  make rtl/netlist 编译使用；make syn 综合用模块自带的上升沿综合视图
+#  （<模块>/syn/，行为模型为负沿读写仿真视图，yosys 无法展开）。
+#  依赖声明见 <模块>_SRAMS。
 # ===========================================================================
 sram:
 	@[ -f $(CURDIR)/$(THIRD_PARTY)/openram/sram_compiler.py ] || { \
@@ -294,8 +296,19 @@ syn:
 	  $(YOSYS_FIND); \
 	  RTL_FILES="$$(ls $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/rtl/*.sv 2>/dev/null)"; \
 	  [ -n "$$RTL_FILES" ] || { echo "$(MOD)/rtl/ 下无 RTL"; exit 1; }; \
-	  if [ -n "$(strip $($(MOD)_SRAMS))" ]; then \
-	    echo "注：$(MOD) 含 SRAM 宏（$(strip $($(MOD)_SRAMS))），yosys 按黑盒处理，宏面积另行计入（产物见 $(SRAM_DIR)/）"; \
+	  NEED_SRAMS="$(strip $($(MOD)_SRAMS))"; SRAM_SYN_FILES=""; \
+	  if [ -n "$$NEED_SRAMS" ]; then \
+	    NEED_GEN=""; \
+	    for s in $$NEED_SRAMS; do \
+	      [ -f $(CURDIR)/$(SRAM_DIR)/$$s/$$s.v ] || NEED_GEN=1; \
+	    done; \
+	    if [ -n "$$NEED_GEN" ]; then \
+	      echo "$(MOD) 所需 SRAM 宏缺失，先执行 make sram"; \
+	      $(MAKE) -C $(CURDIR) --no-print-directory sram || exit 1; \
+	    fi; \
+	    SRAM_SYN_FILES="$$(ls $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/syn/*.sv 2>/dev/null)"; \
+	    [ -n "$$SRAM_SYN_FILES" ] || { echo "$(MOD) 含 SRAM 宏但缺少综合视图（$(SUBMOD_DIR)/$(MOD)/syn/*.sv）"; exit 1; }; \
+	    echo "注：$(MOD) 的 SRAM 宏随 RTL 一并综合（上升沿综合视图，$(SUBMOD_DIR)/$(MOD)/syn/）"; \
 	  fi; \
 	  DONT_USE=$$(sed -n 's/^export DONT_USE_CELLS = //p' $(PDK_ROOT)/nangate45/config.mk); \
 	  DU_FLAGS=""; for c in $$DONT_USE; do DU_FLAGS="$$DU_FLAGS -dont_use $$c"; done; \
@@ -312,7 +325,9 @@ syn:
 	  fi; \
 	  mkdir -p $(SYN_DIR)/$(MOD); \
 	  { echo "read_verilog -sv $$RTL_FILES"; \
+	    for f in $$SRAM_SYN_FILES; do echo "read_verilog -sv $$f"; done; \
 	    echo "hierarchy -top $(MOD)"; \
+	    if [ -n "$$SRAM_SYN_FILES" ]; then echo "flatten"; fi; \
 	    echo "proc; opt; memory; opt; techmap; opt"; \
 	    echo "dfflibmap -liberty $(NANGATE_LIB) $$DU_FLAGS"; \
 	    echo "abc -liberty $(NANGATE_LIB) $$DU_FLAGS $$ABC_CONSTR"; \

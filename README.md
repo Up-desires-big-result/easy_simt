@@ -68,10 +68,12 @@ joblib。环境变量 `OPENRAM_HOME`（指向 `compiler/`）、`OPENRAM_TECH`（
 `technology/`）与 `PYTHONPATH` 由 setup.sh 导出。
 
 宏生成统一走 `make sram`：按 Makefile 的形状清单（`SRAM_MACROS`）现场生成到
-`tmp/sram/<名>/`（已生成则跳过）；宏的行为模型（`<名>.v`）供 `make rtl` /
-`make netlist` 编译——需要宏的模块编译前自动检查，缺失先执行 `make sram`。
-当前仅 rf 需要一种形状（128 字 × 32 位、双 RW 口），以 8 lane × 镜像对共
-16 宏例化（见 `submodules/rf/rtl/rf.sv`）。
+`tmp/sram/<名>/`（已生成则跳过）；宏的行为模型（`<名>.v`，负沿读写的仿真
+视图）供 `make rtl` / `make netlist` 编译；`make syn` 则用 `<模块>/syn/` 下的
+同名上升沿综合视图把宏随 RTL 一并综合（yosys 无法展开负沿存储）。需要宏的
+模块在编译/综合前均自动检查宏产物，缺失先执行 `make sram`。当前仅 rf 需要
+一种形状（128 字 × 32 位、双 RW 口），以 8 lane × 镜像对共 16 宏例化
+（见 `submodules/rf/rtl/rf.sv`）。
 
 两条已验证的前置：配置须设 `use_nix = False`（本机无 Nix，跳过 OpenRAM
 默认的 Nix 工具链自举）；`check_lvsdrc = False` 时不依赖 magic 即可产出
@@ -111,6 +113,7 @@ easy_simt/
     └── <子模块>/  × 10      每个镜像 docs/ + rtl/ + tb/
         ├── docs/            单元规范 <单元名>_spec.md（bs/ialu/falu/rf 已备，其余待补）
         ├── rtl/             单元 RTL <单元名>.sv（bs/ialu/falu/rf 已备，其余待补）
+        ├── syn/             SRAM 宏上升沿综合视图（rf 已备，其余预留）
         └── tb/              单元 testbench tb_<单元名>_vsim.cpp（C++ harness，bs/ialu/falu/rf 已备，其余待补）
 ```
 
