@@ -318,4 +318,4 @@ V3 与 32-lane 基线"全分化"的差异纯属粒度效应：8 lane 下部分 w
 
 **接口**：收 `sf_rf_rd{rs1,rs2}`、`{ialu,falu,lsu}_rf_wb{wdata,lane_mask}`（写使能随 `lane_mask` 随路，intf_spec §1.8）；发 `rf→sf 操作数`。
 
-**信号级端口与模块级规范**：信号级端口见 intf_spec §11；模块级规范未成文，当前参考实现为 `top/cmodel/rf.c`。
+**信号级端口与模块级规范**：信号级端口见 intf_spec §11；模块级规范见 `submodules/rf/docs/rf_spec_v0.1.md`。
