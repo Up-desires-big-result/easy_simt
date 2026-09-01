@@ -18,8 +18,8 @@
 //      高 64 字），64 拍扫全阵；要求复位保持不少于 64 拍（testbench 70 拍）。
 //   4) 仅支持基线几何（128 字 × 256 位、8 lane），宏为固定尺寸例化。
 //
-// 宏模型：sram_2rw0r0w_32_128_freepdk45（OpenRAM 1.2.49 生成，
-//   配置见 tmp/openram_exp/cfg_rf_bank.py），本文件同目录随附。
+// 宏模型：sram_2rw0r0w_32_128_freepdk45（OpenRAM 生成，make sram 产物落
+//   tmp/sram/；make rtl/netlist 编译前自动检查并生成，不入库）。
 // =============================================================================
 `timescale 1ns/1ps
 
