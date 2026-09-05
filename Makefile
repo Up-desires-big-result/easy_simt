@@ -237,13 +237,17 @@ rtl:
 	  if [ -n "$$NEED_SRAMS" ]; then \
 	    NEED_GEN=""; \
 	    for s in $$NEED_SRAMS; do \
-	      SRAM_FILES="$$SRAM_FILES $(CURDIR)/$(SRAM_DIR)/$$s/$$s.v"; \
 	      [ -f $(CURDIR)/$(SRAM_DIR)/$$s/$$s.v ] || NEED_GEN=1; \
 	    done; \
 	    if [ -n "$$NEED_GEN" ]; then \
 	      echo "$(MOD) 所需 SRAM 宏缺失，先执行 make sram"; \
 	      $(MAKE) -C $(CURDIR) --no-print-directory sram || exit 1; \
 	    fi; \
+	    for s in $$NEED_SRAMS; do \
+	      sed 's/parameter VERBOSE = 1/parameter VERBOSE = 0/' \
+	        $(CURDIR)/$(SRAM_DIR)/$$s/$$s.v > $(CURDIR)/$(SRAM_DIR)/$$s/$$s_sim.v; \
+	      SRAM_FILES="$$SRAM_FILES $(CURDIR)/$(SRAM_DIR)/$$s/$$s_sim.v"; \
+	    done; \
 	  fi; \
 	  RTL_FILES="$$(ls $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/rtl/*.sv 2>/dev/null)"; \
 	  [ -n "$$RTL_FILES" ] || { echo "$(MOD)/rtl/ 下无 RTL"; exit 1; }; \
@@ -306,9 +310,10 @@ syn:
 	      echo "$(MOD) 所需 SRAM 宏缺失，先执行 make sram"; \
 	      $(MAKE) -C $(CURDIR) --no-print-directory sram || exit 1; \
 	    fi; \
-	    SRAM_SYN_FILES="$$(ls $(CURDIR)/$(SUBMOD_DIR)/$(MOD)/syn/*.sv 2>/dev/null)"; \
-	    [ -n "$$SRAM_SYN_FILES" ] || { echo "$(MOD) 含 SRAM 宏但缺少综合视图（$(SUBMOD_DIR)/$(MOD)/syn/*.sv）"; exit 1; }; \
-	    echo "注：$(MOD) 的 SRAM 宏随 RTL 一并综合（上升沿综合视图，$(SUBMOD_DIR)/$(MOD)/syn/）"; \
+	    for s in $$NEED_SRAMS; do \
+	      SRAM_SYN_FILES="$$SRAM_SYN_FILES $(CURDIR)/$(SRAM_DIR)/$$s/$$s.v"; \
+	    done; \
+	    echo "注：$(MOD) 的 SRAM 宏按黑盒综合（宏例化保留于网表，面积取宏 Liberty，见综合尾汇总）"; \
 	  fi; \
 	  DONT_USE=$$(sed -n 's/^export DONT_USE_CELLS = //p' $(PDK_ROOT)/nangate45/config.mk); \
 	  DU_FLAGS=""; for c in $$DONT_USE; do DU_FLAGS="$$DU_FLAGS -dont_use $$c"; done; \
@@ -326,8 +331,8 @@ syn:
 	  mkdir -p $(SYN_DIR)/$(MOD); \
 	  { echo "read_verilog -sv $$RTL_FILES"; \
 	    for f in $$SRAM_SYN_FILES; do echo "read_verilog -sv $$f"; done; \
+	    for s in $$NEED_SRAMS; do echo "blackbox $$s"; done; \
 	    echo "hierarchy -top $(MOD)"; \
-	    if [ -n "$$SRAM_SYN_FILES" ]; then echo "flatten"; fi; \
 	    echo "proc; opt; memory; opt; techmap; opt"; \
 	    echo "dfflibmap -liberty $(NANGATE_LIB) $$DU_FLAGS"; \
 	    echo "abc -liberty $(NANGATE_LIB) $$DU_FLAGS $$ABC_CONSTR"; \
@@ -337,6 +342,18 @@ syn:
 	  } > $(SYN_DIR)/$(MOD)/syn.ys; \
 	  echo "== syn $(MOD)：yosys + nangate45 =="; \
 	  $$YBIN -s $(SYN_DIR)/$(MOD)/syn.ys -l $(SYN_DIR)/$(MOD)/syn.log || exit 1; \
+	  if [ -n "$$NEED_SRAMS" ]; then \
+	    LOGIC_AREA=$$(awk '/Chip area for module/{print $$NF}' $(SYN_DIR)/$(MOD)/stat.rpt); \
+	    TOTAL_AREA=$$LOGIC_AREA; \
+	    for s in $$NEED_SRAMS; do \
+	      SLIB=$$(ls $(SRAM_DIR)/$$s/$${s}_TT_*.lib 2>/dev/null | head -1); \
+	      MAREA=$$(awk -F': *' '/^ *area *:/{gsub(/;.*/,"",$$2); print $$2; exit}' $$SLIB); \
+	      MN=$$(awk -v m="$$s" '$$3==m{print $$1}' $(SYN_DIR)/$(MOD)/stat.rpt); \
+	      echo "宏 $$s：$$MN 例 × $${MAREA} µm² = $$(awk -v a=$$MN -v b=$$MAREA 'BEGIN{print a*b}') µm²"; \
+	      TOTAL_AREA=$$(awk -v t=$$TOTAL_AREA -v a=$$MN -v b=$$MAREA 'BEGIN{print t+a*b}'); \
+	    done; \
+	    echo "面积汇总（物理宏口径）：逻辑 $${LOGIC_AREA} µm² + 宏 = $${TOTAL_AREA} µm²（stat.rpt 的 Chip area 仅含逻辑部分）"; \
+	  fi; \
 	  echo "综合完成：网表与报告落 $(SYN_DIR)/$(MOD)/（$(MOD)_netlist.v / stat.rpt / syn.log）"; \
 	fi
 
@@ -376,13 +393,17 @@ netlist:
 	  if [ -n "$$NEED_SRAMS" ]; then \
 	    NEED_GEN=""; \
 	    for s in $$NEED_SRAMS; do \
-	      SRAM_FILES="$$SRAM_FILES $(CURDIR)/$(SRAM_DIR)/$$s/$$s.v"; \
 	      [ -f $(CURDIR)/$(SRAM_DIR)/$$s/$$s.v ] || NEED_GEN=1; \
 	    done; \
 	    if [ -n "$$NEED_GEN" ]; then \
 	      echo "$(MOD) 所需 SRAM 宏缺失，先执行 make sram"; \
 	      $(MAKE) -C $(CURDIR) --no-print-directory sram || exit 1; \
 	    fi; \
+	    for s in $$NEED_SRAMS; do \
+	      sed 's/parameter VERBOSE = 1/parameter VERBOSE = 0/' \
+	        $(CURDIR)/$(SRAM_DIR)/$$s/$$s.v > $(CURDIR)/$(SRAM_DIR)/$$s/$$s_sim.v; \
+	      SRAM_FILES="$$SRAM_FILES $(CURDIR)/$(SRAM_DIR)/$$s/$$s_sim.v"; \
+	    done; \
 	  fi; \
 	  $$VBIN --exe --cc --trace --no-timing -Wno-fatal --top-module $(MOD) -Mdir . -o vsim_$(MOD) \
 	    $(CURDIR)/$(SYN_DIR)/$(MOD)/$(MOD)_netlist.v \

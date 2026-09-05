@@ -164,7 +164,7 @@ module rf #(
             wire [IDX_W-1:0] p1_addr_m0 = clear_on ? clr_addr1 : ridx_a;
             wire [IDX_W-1:0] p1_addr_m1 = clear_on ? clr_addr1 : ridx_b;
 
-            sram_2rw0r0w_32_128_freepdk45 #(.VERBOSE(0)) u_m0 (
+            sram_2rw0r0w_32_128_freepdk45 u_m0 (
                 .clk0 (clk),
                 .csb0 (p0_csb),
                 .web0 (1'b0),                 // 0 = 写
@@ -179,7 +179,7 @@ module rf #(
                 .dout1(dout_m0[gl])
             );
 
-            sram_2rw0r0w_32_128_freepdk45 #(.VERBOSE(0)) u_m1 (
+            sram_2rw0r0w_32_128_freepdk45 u_m1 (
                 .clk0 (clk),
                 .csb0 (p0_csb),
                 .web0 (1'b0),
