@@ -268,7 +268,7 @@ V3 与 32-lane 基线"全分化"的差异纯属粒度效应：8 lane 下部分 w
 
 **接口**：收 `sf_lsu_issue`（含 `shbase`）；发 `lsu_l1sm_req{rw,sm,addr[8×32],wdata[8×32],mask[8]}`、`lsu_ws_stall{warp_id,reason=LMISS}`、`lsu_rf_wb{wdata[8×32]}`、`lsu_sf_wbdone{warp_id,rd}`（借此上报排空状态）；收 `l1sm_lsu_rsp{rdata[8×32]}`。写通存储等写应答返回才算完成。
 
-**信号级端口与模块级规范**：信号级端口见 intf_spec §7；模块级规范未成文，当前参考实现为 `top/cmodel/lsu.c`。
+**信号级端口与模块级规范**：信号级端口见 intf_spec §7；模块级规范见 `submodules/lsu/docs/lsu_spec_v0.1.md`。
 
 ## 8. icache — Instruction Cache
 
