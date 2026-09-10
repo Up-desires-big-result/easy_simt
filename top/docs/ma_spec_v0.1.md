@@ -304,7 +304,7 @@ V3 与 32-lane 基线"全分化"的差异纯属粒度效应：8 lane 下部分 w
 
 **接口**：收 `icache_memif_req{addr}`、`l1sm_memif_req{addr}`；发 `memif_icache_rsp{line}`、`memif_l1sm_rsp{line}`；对外 AXI4（AW/W/B/AR/R）。
 
-**信号级端口与模块级规范**：信号级端口见 intf_spec §10；模块级规范未成文，当前参考实现为 `top/cmodel/memif.c`。
+**信号级端口与模块级规范**：信号级端口见 intf_spec §10；模块级规范见 `submodules/memif/docs/memif_spec_v0.1.md`。
 
 ## 11. rf — Register File
 
