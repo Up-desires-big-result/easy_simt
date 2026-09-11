@@ -115,9 +115,9 @@ easy_simt/
 │   └── rtl/  tb/            顶层互连 RTL 与 testbench（预留）
 └── submodules/              10 个硬件子模块，与 top/ 同级
     └── <子模块>/  × 10      每个镜像 docs/ + rtl/ + tb/
-        ├── docs/            单元规范 <单元名>_spec.md（bs/ialu/falu/lsu/memif/rf 已备，其余待补）
-        ├── rtl/             单元 RTL <单元名>.sv（bs/ialu/falu/lsu/memif/rf 已备，其余待补）
-        └── tb/              单元 testbench tb_<单元名>_vsim.cpp（C++ harness，bs/ialu/falu/lsu/memif/rf 已备，其余待补）
+        ├── docs/            单元规范 <单元名>_spec.md（bs/ialu/falu/lsu/icache/memif/rf 已备，其余待补）
+        ├── rtl/             单元 RTL <单元名>.sv（bs/ialu/falu/lsu/icache/memif/rf 已备，其余待补）
+        └── tb/              单元 testbench tb_<单元名>_vsim.cpp（C++ harness，bs/ialu/falu/lsu/icache/memif/rf 已备，其余待补）
 ```
 
 子模块位于 `submodules/` 下，与 `top/` 同级，各含 `docs/` + `rtl/` + `tb/`。
@@ -138,7 +138,7 @@ easy_simt/
 
 单元内命名：`rtl/<单元名>.sv`、`tb/tb_<单元名>_vsim.cpp`、`docs/<单元名>_spec.md`，
 单元名与目录名一致。模块职责与接口见 `top/docs/ma_spec_v0.1.md` §1.4 与
-`intf_spec_v0.1.md`。当前 `bs`、`ialu`、`falu`、`lsu`、`memif`、`rf` 的 spec / RTL / testbench
+`intf_spec_v0.1.md`。当前 `bs`、`ialu`、`falu`、`lsu`、`icache`、`memif`、`rf` 的 spec / RTL / testbench
 三件套已备（其中 `rf` 的存储阵列为 OpenRAM SRAM 宏实现，见 `rf_spec`），
 其余模块待补。
 

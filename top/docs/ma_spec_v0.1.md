@@ -276,7 +276,7 @@ V3 与 32-lane 基线"全分化"的差异纯属粒度效应：8 lane 下部分 w
 
 **接口**：收 `sf_icache_req{pc}`；发 `icache_sf_rsp{inst}`、`icache_memif_req{addr}`；收 `memif_icache_rsp{line}`。
 
-**信号级端口与模块级规范**：信号级端口见 intf_spec §8；模块级规范未成文，当前参考实现为 `top/cmodel/icache.c`。
+**信号级端口与模块级规范**：信号级端口见 intf_spec §8；模块级规范见 `submodules/icache/docs/icache_spec_v0.1.md`。
 
 ## 9. l1sm — L1 + Shared Memory（统一 SRAM）
 
