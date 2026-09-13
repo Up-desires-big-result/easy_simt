@@ -5,7 +5,7 @@
  * 谓词寄存器 P0..P3 物理上驻留本模块（SETp 写、BR 读，"直接喂分支判定"，
  * ma_spec §5），块启动时清零。
  *
- * sf 侧载荷约定（均为 sf 译码期归一化后的形式）：
+ * ws 侧载荷约定（均为 ws 译码期归一化后的形式）：
  *   - IADD/SHL/ORI：opa=R[ra]，opb=第二源（寄存器值或立即数广播）；
  *   - LUI/LDP/CSRR：opa=写入值广播，直通产出（偏差 C3）；
  *   - SETP：rd=pd，imm=(fmt<<3)|cond；
@@ -26,12 +26,12 @@ int ialu_step(sim_t *s)
     /* ---- 输出排空：br → wb → wbdone（置位后等消费者清零） ---- */
     if (u->br_stage) {
         if (!u->br_sent) {
-            if (!s->ialu_sf_br.vld) {
-                s->ialu_sf_br.p = u->br;
-                s->ialu_sf_br.vld = 1;
+            if (!s->ialu_ws_br.vld) {
+                s->ialu_ws_br.p = u->br;
+                s->ialu_ws_br.vld = 1;
                 u->br_sent = 1;
             }
-        } else if (!s->ialu_sf_br.vld) {
+        } else if (!s->ialu_ws_br.vld) {
             u->br_stage = 0;
             u->br_sent = 0;
             u->has_issue = 0;
@@ -55,12 +55,12 @@ int ialu_step(sim_t *s)
     }
     if (u->wb_stage == 2) {
         if (!u->wbd_sent) {
-            if (!s->ialu_sf_wbdone.vld) {
-                s->ialu_sf_wbdone.p = u->wbd;
-                s->ialu_sf_wbdone.vld = 1;
+            if (!s->ialu_ws_wbdone.vld) {
+                s->ialu_ws_wbdone.p = u->wbd;
+                s->ialu_ws_wbdone.vld = 1;
                 u->wbd_sent = 1;
             }
-        } else if (!s->ialu_sf_wbdone.vld) {
+        } else if (!s->ialu_ws_wbdone.vld) {
             u->wb_stage = 0;
             u->wbd_sent = 0;
             u->has_issue = 0;
@@ -72,9 +72,9 @@ int ialu_step(sim_t *s)
     /* ---- 输入：接收发射 ---- */
     if (u->has_issue)
         return fired;
-    if (!u->has_issue && s->sf_ialu_issue.vld) {
-        ialu_issue_t is = s->sf_ialu_issue.p;
-        s->sf_ialu_issue.vld = 0;
+    if (!u->has_issue && s->ws_ialu_issue.vld) {
+        ialu_issue_t is = s->ws_ialu_issue.p;
+        s->ws_ialu_issue.vld = 0;
         s->st.fires++;
         fired++;
         u->has_issue = 1;
@@ -167,7 +167,7 @@ int ialu_step(sim_t *s)
             u->br.warp_id = w;
             u->br.taken = taken;
             u->br.target = target;
-            u->br.brt_idx = 0;       /* sf 按分支 pc 查 BRT */
+            u->br.brt_idx = 0;       /* ws 按分支 pc 查 BRT */
             u->br_stage = 1;
             return fired;
         }

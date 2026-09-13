@@ -1,9 +1,9 @@
 // =============================================================================
-// easy_simt · memif — Memory Interface（ma_spec §10）
+// easy_simt · memif — Memory Interface（ma_spec §9）
 //
 // 片外唯一通道：仲裁 icache 与 l1sm 的回填/写通请求，固定优先级
 // （icache 优先），单请求在途；对外为 AXI4 主设备（全五通道，ID 恒 0，
-// INCR）。请求队列留参数位，v1 不实现（ma_spec §10）。
+// INCR）。请求队列留参数位，v1 不实现（ma_spec §9）。
 //
 // 时序结构（memif_spec §1.4/§7）：
 //   请求通道组合直通——arvalid/awvalid/wvalid 随内部请求组合呈现，
@@ -13,13 +13,13 @@
 //   导出，axi_rready/bready 由内部消费者 rdy 门控（从设备保持
 //   rvalid/bvalid 至本模块接收）；
 //   本模块自身不加延迟：片外固定延迟 MEM_LAT 由 tb 侧 AXI 从设备建模
-//   （intf_spec §10；C 模型中为响应倒计时，memif_spec §1.5）。
+//   （intf_spec §9；C 模型中为响应倒计时，memif_spec §1.5）。
 //
 // rresp/bresp 非 OKAY 于响应呈现拍检测，次拍起 memif_top_err=1 并保持
-// 至复位（intf_spec §10）；响应照常交付。
+// 至复位（intf_spec §9）；响应照常交付。
 //
 // 设计依据：memif/docs/memif_spec_v0.1.md；
-//   端口命名与 intf_spec §10 一致（内部通道见 §10 内部侧、AXI 参数见
+//   端口命名与 intf_spec §9 一致（内部通道见 §10 内部侧、AXI 参数见
 //   §1.4），握手协议与 intf_spec §1.2 一致。
 // =============================================================================
 `timescale 1ns/1ps
@@ -35,7 +35,7 @@ module memif #(
     input  wire                  clk,
     input  wire                  rst_n,
 
-    // icache_memif_req / memif_icache_rsp（intf_spec §10 内部侧）
+    // icache_memif_req / memif_icache_rsp（intf_spec §9 内部侧）
     input  wire                  icache_memif_req_vld,
     input  wire [AXI_ADDR_W-1:0] icache_memif_req_addr,
     output wire                  memif_icache_req_rdy,
@@ -43,7 +43,7 @@ module memif #(
     output wire [AXI_DATA_W-1:0] memif_icache_rsp_data,
     input  wire                  icache_memif_rsp_rdy,
 
-    // l1sm_memif_req / memif_l1sm_rsp（intf_spec §10 内部侧）
+    // l1sm_memif_req / memif_l1sm_rsp（intf_spec §9 内部侧）
     input  wire                  l1sm_memif_req_vld,
     input  wire                  l1sm_memif_req_rw,
     input  wire [AXI_ADDR_W-1:0] l1sm_memif_req_addr,
@@ -107,7 +107,7 @@ module memif #(
         end
     endgenerate
 
-    // ---------------- 常量（intf_spec §10 v1 约束） ----------------
+    // ---------------- 常量（intf_spec §9 v1 约束） ----------------
     localparam [1:0] RESP_OKAY   = 2'b00;
     localparam [2:0] ASIZE_LINE  = 3'b101;    // 读：32B/拍，单拍整行
     localparam [2:0] ASIZE_WORD  = 3'b010;    // 写：4B 窄传
@@ -145,7 +145,7 @@ module memif #(
     wire [AXI_ADDR_W-1:0] req_addr = ic_sel ? icache_memif_req_addr
                                             : l1sm_memif_req_addr;
     wire [31:0]  req_wdata = l1sm_memif_req_wdata;
-    wire [4:0]   wsel      = req_addr[4:2];      // 写窄传字定位（intf_spec §10）
+    wire [4:0]   wsel      = req_addr[4:2];      // 写窄传字定位（intf_spec §9）
 
     wire wr_req_go = (state == S_IDLE) ? req_wr : (state == S_WREQ);
 

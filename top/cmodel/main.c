@@ -233,8 +233,8 @@ int main(int argc, char **argv)
            (unsigned long long)s->rounds);
 
     if (s->err)
-        printf("\nERROR FLAG: sf_err=%d memif_err=%d\n",
-               s->sf.err, s->memif.err);
+        printf("\nERROR FLAG: ws_err=%d memif_err=%d\n",
+               s->ws.err, s->memif.err);
 
     free(ref);
     free(in_ref);

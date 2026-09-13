@@ -2,7 +2,7 @@
  * icache.c — Instruction Cache（ma_spec §8）
  *
  * 直接映射，32B 行 = 8 条指令，默认 16 行（512B）。缺失阻塞：缺失期间
- * 取指请求挂起（sf 侧记 IMISS），经 memif 回填整行后返回指令。
+ * 取指请求挂起（ws 侧记 IMISS），经 memif 回填整行后返回指令。
  * 无预取、无无效化（程序只读）。
  * ========================================================================== */
 #include "sim_common.h"
@@ -15,12 +15,12 @@ int icache_step(sim_t *s)
     /* ---- 命中/回填完成：回送指令 ---- */
     if (c->rsp_pending) {
         if (!c->rsp_sent) {
-            if (!s->icache_sf_rsp.vld) {
-                s->icache_sf_rsp.p.inst = c->rsp_inst;
-                s->icache_sf_rsp.vld = 1;
+            if (!s->icache_ws_rsp.vld) {
+                s->icache_ws_rsp.p.inst = c->rsp_inst;
+                s->icache_ws_rsp.vld = 1;
                 c->rsp_sent = 1;
             }
-        } else if (!s->icache_sf_rsp.vld) {
+        } else if (!s->icache_ws_rsp.vld) {
             c->rsp_pending = 0;
             c->rsp_sent = 0;
             s->st.fires++;
@@ -54,9 +54,9 @@ int icache_step(sim_t *s)
     }
 
     /* ---- 接收取指请求 ---- */
-    if (!c->miss && !c->rsp_pending && s->sf_icache_req.vld) {
-        uint32_t pc = s->sf_icache_req.p.pc;
-        s->sf_icache_req.vld = 0;
+    if (!c->miss && !c->rsp_pending && s->ws_icache_req.vld) {
+        uint32_t pc = s->ws_icache_req.p.pc;
+        s->ws_icache_req.vld = 0;
         s->st.fires++;
         fired++;
 

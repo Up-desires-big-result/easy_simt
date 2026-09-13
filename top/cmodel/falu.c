@@ -28,12 +28,12 @@ int falu_step(sim_t *s)
     }
     if (u->wb_stage == 2) {
         if (!u->wbd_sent) {
-            if (!s->falu_sf_wbdone.vld) {
-                s->falu_sf_wbdone.p = u->wbd;
-                s->falu_sf_wbdone.vld = 1;
+            if (!s->falu_ws_wbdone.vld) {
+                s->falu_ws_wbdone.p = u->wbd;
+                s->falu_ws_wbdone.vld = 1;
                 u->wbd_sent = 1;
             }
-        } else if (!s->falu_sf_wbdone.vld) {
+        } else if (!s->falu_ws_wbdone.vld) {
             u->wb_stage = 0;
             u->wbd_sent = 0;
             u->has_issue = 0;
@@ -45,9 +45,9 @@ int falu_step(sim_t *s)
     /* ---- 输入：接收发射 ---- */
     if (u->has_issue)
         return fired;
-    if (s->sf_falu_issue.vld) {
-        falu_issue_t is = s->sf_falu_issue.p;
-        s->sf_falu_issue.vld = 0;
+    if (s->ws_falu_issue.vld) {
+        falu_issue_t is = s->ws_falu_issue.p;
+        s->ws_falu_issue.vld = 0;
         s->st.fires++;
         fired++;
         u->has_issue = 1;

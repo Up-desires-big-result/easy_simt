@@ -1,5 +1,5 @@
 // =============================================================================
-// easy_simt · lsu — Load/Store Unit（ma_spec §7）
+// easy_simt · lsu — Load/Store Unit（ma_spec §6）
 //
 // 保持薄：不含 tag 比较、不含阵列/bank。per-lane 地址生成（基址+偏移，
 // 共享再叠 SHBASE）、active mask 门控、8-lane 锁步一拍发出一个 8-lane
@@ -19,8 +19,8 @@
 // 通道在途或清除未发时发射的指令不报 LMISS（与 C 模型一致）。
 //
 // 设计依据：lsu/docs/lsu_spec_v0.1.md；
-//   端口命名与 intf_spec §7 一致（issue 载荷见 intf_spec §2；
-//   sf_lsu_issue_opb 为偏差 C1 增设字段，与 cmodel 一致），
+//   端口命名与 intf_spec §6 一致（issue 载荷见 intf_spec §2；
+//   ws_lsu_issue_opb 为偏差 C1 增设字段，与 cmodel 一致），
 //   握手协议与 intf_spec §1.2 一致。
 // =============================================================================
 `timescale 1ns/1ps
@@ -37,19 +37,19 @@ module lsu #(
     input  wire                 clk,
     input  wire                 rst_n,
 
-    // sf_lsu_issue：sf 发射（载荷为 sf 译码归一化形式，lsu_spec §1.3）
-    input  wire                 sf_lsu_issue_vld,
-    input  wire [OPCODE_W-1:0]  sf_lsu_issue_opcode,
-    input  wire [REG_AW-1:0]    sf_lsu_issue_rd,
-    input  wire [WARP_IW-1:0]   sf_lsu_issue_warp_id,
-    input  wire [NLANES-1:0]    sf_lsu_issue_lane_mask,
-    input  wire [VEC_W-1:0]     sf_lsu_issue_opa,
-    input  wire [VEC_W-1:0]     sf_lsu_issue_opb,   // 偏差 C1 增设（lsu_spec §2）
-    input  wire [DATA_W-1:0]    sf_lsu_issue_imm,
-    input  wire [DATA_W-1:0]    sf_lsu_issue_shbase,
-    output wire                 lsu_sf_issue_rdy,
+    // ws_lsu_issue：ws 发射（载荷为 ws 译码归一化形式，lsu_spec §1.3）
+    input  wire                 ws_lsu_issue_vld,
+    input  wire [OPCODE_W-1:0]  ws_lsu_issue_opcode,
+    input  wire [REG_AW-1:0]    ws_lsu_issue_rd,
+    input  wire [WARP_IW-1:0]   ws_lsu_issue_warp_id,
+    input  wire [NLANES-1:0]    ws_lsu_issue_lane_mask,
+    input  wire [VEC_W-1:0]     ws_lsu_issue_opa,
+    input  wire [VEC_W-1:0]     ws_lsu_issue_opb,   // 偏差 C1 增设（lsu_spec §2）
+    input  wire [DATA_W-1:0]    ws_lsu_issue_imm,
+    input  wire [DATA_W-1:0]    ws_lsu_issue_shbase,
+    output wire                 lsu_ws_issue_rdy,
 
-    // lsu_l1sm_req：8-lane 锁步访存请求（intf_spec §7）
+    // lsu_l1sm_req：8-lane 锁步访存请求（intf_spec §6）
     output wire                 lsu_l1sm_req_vld,
     output wire                 lsu_l1sm_req_rw,
     output wire                 lsu_l1sm_req_sm,
@@ -77,11 +77,11 @@ module lsu #(
     output wire [VEC_W-1:0]     lsu_rf_wb_wdata,
     input  wire                 rf_lsu_wb_rdy,
 
-    // lsu_sf_wbdone：写回完成（供 sf 清记分板 / 上报排空状态）
-    output wire                 lsu_sf_wbdone_vld,
-    output wire [WARP_IW-1:0]   lsu_sf_wbdone_warp_id,
-    output wire [REG_AW-1:0]    lsu_sf_wbdone_rd,
-    input  wire                 sf_lsu_wbdone_rdy
+    // lsu_ws_wbdone：写回完成（供 ws 清记分板 / 上报排空状态）
+    output wire                 lsu_ws_wbdone_vld,
+    output wire [WARP_IW-1:0]   lsu_ws_wbdone_warp_id,
+    output wire [REG_AW-1:0]    lsu_ws_wbdone_rd,
+    input  wire                 ws_lsu_wbdone_rdy
 );
 
     // ---------------- 操作码（isa_spec §1.8，本模块合法子集） ----------------
@@ -90,7 +90,7 @@ module lsu #(
     localparam [OPCODE_W-1:0] OP_LDS = 5'h0D;
     localparam [OPCODE_W-1:0] OP_STS = 5'h0E;
 
-    // ---------------- 停顿原因（intf_spec §3 stall_t） ----------------
+    // ---------------- 停顿原因（intf_spec §2 stall_t） ----------------
     localparam [2:0] R_NONE  = 3'd0;
     localparam [2:0] R_LMISS = 3'd3;
 
@@ -101,7 +101,7 @@ module lsu #(
     localparam [2:0] S_RSP  = 3'd3;   // 响应段：呈现 lsu_l1sm_rsp_rdy
     localparam [2:0] S_WB   = 3'd4;   // 写回段：呈现 lsu_rf_wb（仅装载）
     localparam [2:0] S_WBW  = 3'd5;   // 写回接收检测拍（镜像 C 模型 stage 4 检测）
-    localparam [2:0] S_WBD  = 3'd6;   // 写回完成段：呈现 lsu_sf_wbdone
+    localparam [2:0] S_WBD  = 3'd6;   // 写回完成段：呈现 lsu_ws_wbdone
 
     // ---------------- 内部状态（lsu_spec §4） ----------------
     reg  [2:0]          state;
@@ -119,37 +119,37 @@ module lsu #(
     reg  [2:0]          stall_preason;
 
     // ---------------- 握手组合判据 ----------------
-    wire issue_fire = sf_lsu_issue_vld && lsu_sf_issue_rdy;
+    wire issue_fire = ws_lsu_issue_vld && lsu_ws_issue_rdy;
     wire req_fire   = lsu_l1sm_req_vld  && l1sm_lsu_req_rdy;
     wire rsp_fire   = l1sm_lsu_rsp_vld  && lsu_l1sm_rsp_rdy;
     wire wb_fire    = lsu_rf_wb_vld     && rf_lsu_wb_rdy;
-    wire wbd_fire   = lsu_sf_wbdone_vld && sf_lsu_wbdone_rdy;
+    wire wbd_fire   = lsu_ws_wbdone_vld && ws_lsu_wbdone_rdy;
 
     // ---------------- 通道 vld / rdy（寄存器输出经状态译码，lsu_spec §4） ----
-    assign lsu_sf_issue_rdy  = (state == S_IDLE);
+    assign lsu_ws_issue_rdy  = (state == S_IDLE);
     assign lsu_l1sm_req_vld  = (state == S_REQ);
     assign lsu_l1sm_rsp_rdy  = (state == S_RSP);
     assign lsu_rf_wb_vld     = (state == S_WB);
-    assign lsu_sf_wbdone_vld = (state == S_WBD);
+    assign lsu_ws_wbdone_vld = (state == S_WBD);
 
     // ---------------- per-lane 地址生成与请求拼装（lsu_spec §5.1/§5.2） ------
     // 地址 = 基址 + 偏移：LDG opa+imm、STG opb+imm、LDS shbase+opa、STS shbase+opb；
     // mask 外 lane 地址/数据置 0（与 C 模型一致）；存储数据取 opa
-    wire is_store = (sf_lsu_issue_opcode == OP_STG) ||
-                    (sf_lsu_issue_opcode == OP_STS);
-    wire is_sm    = (sf_lsu_issue_opcode == OP_LDS) ||
-                    (sf_lsu_issue_opcode == OP_STS);
+    wire is_store = (ws_lsu_issue_opcode == OP_STG) ||
+                    (ws_lsu_issue_opcode == OP_STS);
+    wire is_sm    = (ws_lsu_issue_opcode == OP_LDS) ||
+                    (ws_lsu_issue_opcode == OP_STS);
 
     wire [VEC_W-1:0] addr_c, wdata_c;
     genvar gi;
     generate
         for (gi = 0; gi < NLANES; gi = gi + 1) begin : g_lane
-            wire [DATA_W-1:0] a = sf_lsu_issue_opa[gi*DATA_W +: DATA_W];
-            wire [DATA_W-1:0] b = sf_lsu_issue_opb[gi*DATA_W +: DATA_W];
-            wire              act = sf_lsu_issue_lane_mask[gi];
+            wire [DATA_W-1:0] a = ws_lsu_issue_opa[gi*DATA_W +: DATA_W];
+            wire [DATA_W-1:0] b = ws_lsu_issue_opb[gi*DATA_W +: DATA_W];
+            wire              act = ws_lsu_issue_lane_mask[gi];
             wire [DATA_W-1:0] off  = is_store ? b : a;
-            wire [DATA_W-1:0] base = is_sm ? sf_lsu_issue_shbase
-                                           : sf_lsu_issue_imm;
+            wire [DATA_W-1:0] base = is_sm ? ws_lsu_issue_shbase
+                                           : ws_lsu_issue_imm;
             assign addr_c[gi*DATA_W +: DATA_W]  = act ? (base + off)
                                                        : {DATA_W{1'b0}};
             assign wdata_c[gi*DATA_W +: DATA_W] = (act && is_store) ? a
@@ -166,7 +166,7 @@ module lsu #(
     wire clear_go = (state == S_IDLE) && stall_sent && !stall_busy;
 
     assign lsu_ws_stall_vld     = stall_busy || lmiss_go || clear_go;
-    assign lsu_ws_stall_warp_id = lmiss_go ? sf_lsu_issue_warp_id
+    assign lsu_ws_stall_warp_id = lmiss_go ? ws_lsu_issue_warp_id
                                 : clear_go ? stall_warp
                                 :            stall_pwarp;
     assign lsu_ws_stall_reason  = lmiss_go ? R_LMISS
@@ -226,15 +226,15 @@ module lsu #(
             if (issue_fire) begin
                 req_rw       <= is_store;
                 req_sm       <= is_sm;
-                req_mask     <= sf_lsu_issue_lane_mask;
+                req_mask     <= ws_lsu_issue_lane_mask;
                 req_addr     <= addr_c;
                 req_wdata    <= wdata_c;
-                wb_warp_id   <= sf_lsu_issue_warp_id;
-                wb_rd        <= sf_lsu_issue_rd;
-                wb_lane_mask <= sf_lsu_issue_lane_mask;
-                wbd_warp_id  <= sf_lsu_issue_warp_id;
-                wbd_rd       <= sf_lsu_issue_rd;
-                stall_warp   <= sf_lsu_issue_warp_id;
+                wb_warp_id   <= ws_lsu_issue_warp_id;
+                wb_rd        <= ws_lsu_issue_rd;
+                wb_lane_mask <= ws_lsu_issue_lane_mask;
+                wbd_warp_id  <= ws_lsu_issue_warp_id;
+                wbd_rd       <= ws_lsu_issue_rd;
+                stall_warp   <= ws_lsu_issue_warp_id;
             end
 
             // ---- 装载数据引导（§5.3）：响应全 8 lane 拷入 wb（与 C 模型一致，
@@ -247,7 +247,7 @@ module lsu #(
                 stall_sent <= 1'b1;
                 if (!stall_fire) begin
                     stall_busy    <= 1'b1;
-                    stall_pwarp   <= sf_lsu_issue_warp_id;
+                    stall_pwarp   <= ws_lsu_issue_warp_id;
                     stall_preason <= R_LMISS;
                 end
             end else if (clear_go) begin
@@ -273,7 +273,7 @@ module lsu #(
     assign lsu_rf_wb_rd           = wb_rd;
     assign lsu_rf_wb_lane_mask    = wb_lane_mask;
     assign lsu_rf_wb_wdata        = wb_wdata;
-    assign lsu_sf_wbdone_warp_id  = wbd_warp_id;
-    assign lsu_sf_wbdone_rd       = wbd_rd;
+    assign lsu_ws_wbdone_warp_id  = wbd_warp_id;
+    assign lsu_ws_wbdone_rd       = wbd_rd;
 
 endmodule

@@ -1,12 +1,12 @@
 // =============================================================================
-// easy_simt · falu — Floating-point ALU（ma_spec §6）
+// easy_simt · falu — Floating-point ALU（ma_spec §5）
 //
 // FMUL/FADD/FNEG，IEEE-754 binary32、RN 舍入（与 top/cmodel/softfloat.c
 // 位精确一致，含 FTZ）。数据通路 8 lane 并行、锁步。
 // 完成路径（falu_spec §1.2）：三种操作码均为 issue -> wb -> wbdone。
 //
 // 设计依据：falu/docs/falu_spec_v0.1.md；
-//   端口命名与 intf_spec §6 一致（issue 载荷见 intf_spec §2），
+//   端口命名与 intf_spec §5 一致（issue 载荷见 intf_spec §2），
 //   握手协议与 intf_spec §1.2 一致。
 // =============================================================================
 `timescale 1ns/1ps
@@ -25,15 +25,15 @@ module falu #(
     input  wire                  clk,
     input  wire                  rst_n,
 
-    // sf_falu_issue：sf 发射（载荷为 sf 译码归一化形式，falu_spec §1.3）
-    input  wire                  sf_falu_issue_vld,
-    input  wire [OPCODE_W-1:0]   sf_falu_issue_opcode,
-    input  wire [REG_AW-1:0]     sf_falu_issue_rd,
-    input  wire [WARP_IW-1:0]    sf_falu_issue_warp_id,
-    input  wire [NLANES-1:0]     sf_falu_issue_lane_mask,
-    input  wire [VEC_W-1:0]      sf_falu_issue_opa,
-    input  wire [VEC_W-1:0]      sf_falu_issue_opb,  // FNEG 时不读取（falu_spec §1.3）
-    output wire                  falu_sf_issue_rdy,
+    // ws_falu_issue：ws 发射（载荷为 ws 译码归一化形式，falu_spec §1.3）
+    input  wire                  ws_falu_issue_vld,
+    input  wire [OPCODE_W-1:0]   ws_falu_issue_opcode,
+    input  wire [REG_AW-1:0]     ws_falu_issue_rd,
+    input  wire [WARP_IW-1:0]    ws_falu_issue_warp_id,
+    input  wire [NLANES-1:0]     ws_falu_issue_lane_mask,
+    input  wire [VEC_W-1:0]      ws_falu_issue_opa,
+    input  wire [VEC_W-1:0]      ws_falu_issue_opb,  // FNEG 时不读取（falu_spec §1.3）
+    output wire                  falu_ws_issue_rdy,
 
     // falu_rf_wb：结果写回
     output wire                  falu_rf_wb_vld,
@@ -43,11 +43,11 @@ module falu #(
     output wire [VEC_W-1:0]      falu_rf_wb_wdata,
     input  wire                  rf_falu_wb_rdy,
 
-    // falu_sf_wbdone：写回完成（供 sf 清记分板）
-    output wire                  falu_sf_wbdone_vld,
-    output wire [WARP_IW-1:0]    falu_sf_wbdone_warp_id,
-    output wire [REG_AW-1:0]     falu_sf_wbdone_rd,
-    input  wire                  sf_falu_wbdone_rdy
+    // falu_ws_wbdone：写回完成（供 ws 清记分板）
+    output wire                  falu_ws_wbdone_vld,
+    output wire [WARP_IW-1:0]    falu_ws_wbdone_warp_id,
+    output wire [REG_AW-1:0]     falu_ws_wbdone_rd,
+    input  wire                  ws_falu_wbdone_rdy
 );
 
     // ---------------- 操作码（isa_spec §1.8，本模块合法子集） ----------------
@@ -68,20 +68,20 @@ module falu #(
     reg  [VEC_W-1:0]     wb_wdata;
 
     // ---------------- issue 载荷切片 ----------------
-    wire [OPCODE_W-1:0] op   = sf_falu_issue_opcode;
-    wire [REG_AW-1:0]   rd_i = sf_falu_issue_rd;
-    wire [WARP_IW-1:0]  w_i  = sf_falu_issue_warp_id;
-    wire [NLANES-1:0]   m_i  = sf_falu_issue_lane_mask;
+    wire [OPCODE_W-1:0] op   = ws_falu_issue_opcode;
+    wire [REG_AW-1:0]   rd_i = ws_falu_issue_rd;
+    wire [WARP_IW-1:0]  w_i  = ws_falu_issue_warp_id;
+    wire [NLANES-1:0]   m_i  = ws_falu_issue_lane_mask;
 
     // ---------------- 握手组合判据 ----------------
-    wire issue_fire = sf_falu_issue_vld  && falu_sf_issue_rdy;
+    wire issue_fire = ws_falu_issue_vld  && falu_ws_issue_rdy;
     wire wb_fire    = falu_rf_wb_vld     && rf_falu_wb_rdy;
-    wire wbd_fire   = falu_sf_wbdone_vld && sf_falu_wbdone_rdy;
+    wire wbd_fire   = falu_ws_wbdone_vld && ws_falu_wbdone_rdy;
 
     // ---------------- 通道 vld / rdy（寄存器输出经状态译码，falu_spec §4） ----------------
-    assign falu_sf_issue_rdy  = (state == S_IDLE);
+    assign falu_ws_issue_rdy  = (state == S_IDLE);
     assign falu_rf_wb_vld     = (state == S_WB);
-    assign falu_sf_wbdone_vld = (state == S_WBD);
+    assign falu_ws_wbdone_vld = (state == S_WBD);
 
     // ---------------- 解包辅助：最高置位位（x != 0 时返回值有效） ----------------
     function automatic integer hi23(input [22:0] x);
@@ -118,8 +118,8 @@ module falu #(
     genvar gi;
     generate
         for (gi = 0; gi < NLANES; gi = gi + 1) begin : g_lane
-            wire [DATA_W-1:0] a = sf_falu_issue_opa[gi*DATA_W +: DATA_W];
-            wire [DATA_W-1:0] b = sf_falu_issue_opb[gi*DATA_W +: DATA_W];
+            wire [DATA_W-1:0] a = ws_falu_issue_opa[gi*DATA_W +: DATA_W];
+            wire [DATA_W-1:0] b = ws_falu_issue_opb[gi*DATA_W +: DATA_W];
 
             // ---- 解包（§5.2） ----
             wire        a_sg = a[31],        b_sg = b[31];
@@ -303,7 +303,7 @@ module falu #(
     assign falu_rf_wb_rd          = wb_rd;
     assign falu_rf_wb_lane_mask   = wb_lane_mask;
     assign falu_rf_wb_wdata       = wb_wdata;
-    assign falu_sf_wbdone_warp_id = wbd_warp_id;
-    assign falu_sf_wbdone_rd      = wbd_rd;
+    assign falu_ws_wbdone_warp_id = wbd_warp_id;
+    assign falu_ws_wbdone_rd      = wbd_rd;
 
 endmodule

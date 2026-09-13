@@ -2,7 +2,7 @@
 // easy_simt · memif 的 Verilator harness（开源单仿真路线）
 //
 // 结构：Verilator 把 submodules/memif/rtl/memif.sv 编译为 C++ 模型（Vmemif）；
-// 本 harness 扮演 tb 侧 AXI4 从设备（intf_spec §10：片外固定延迟 MEM_LAT
+// 本 harness 扮演 tb 侧 AXI4 从设备（intf_spec §9：片外固定延迟 MEM_LAT
 // 归从设备建模，memif 自身不加延迟）与内部侧 icache/l1sm 双请求源、
 // 双响应消费者（随机背压），参考侧直接链接 top/cmodel（memif_step），
 // 按协议语义逐拍锁步比对：

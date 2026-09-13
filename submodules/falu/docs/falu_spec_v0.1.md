@@ -12,7 +12,7 @@
 
 ### 1.1 模块定位与职责
 
-falu 是浮点执行单元，职责为 **FMUL / FADD / FNEG**（ma_spec §6）：
+falu 是浮点执行单元，职责为 **FMUL / FADD / FNEG**（ma_spec §5）：
 
 - 按 IEEE-754 binary32、舍入模式固定 roundTiesToEven（RN）执行乘法与加法；取负仅翻转符号位（isa_spec §9–§11）；
 - 数据通路 **8 lane 并行、锁步**：一拍对 8 个 lane 同时运算，产出 `wdata[8×32]`（写回数据）。
@@ -21,7 +21,7 @@ falu 是浮点执行单元，职责为 **FMUL / FADD / FNEG**（ma_spec §6）�
 
 ### 1.2 指令集范围与完成路径
 
-本模块接受 3 种操作码（sf 分派结果，与 cmodel 分派集合一致），完成路径同一：
+本模块接受 3 种操作码（ws 分派结果，与 cmodel 分派集合一致），完成路径同一：
 
 | 操作码 | 助记符 | 完成路径 |
 |---|---|---|
@@ -31,16 +31,16 @@ falu 是浮点执行单元，职责为 **FMUL / FADD / FNEG**（ma_spec §6）�
 
 同一时刻至多一条指令在途；完成路径内各通道事务严格顺序发出（§5、§6、§7）。
 
-### 1.3 sf 侧载荷约定
+### 1.3 ws 侧载荷约定
 
-载荷均为 sf 译码期归一化后的形式（与 `top/cmodel/falu.c` 头注一致）：
+载荷均为 ws 译码期归一化后的形式（与 `top/cmodel/falu.c` 头注一致）：
 
 | 操作码 | 载荷约定 |
 |---|---|
 | FMUL / FADD | `opa = R[ra]`，`opb = R[rb]` |
 | FNEG | `opa = R[ra]`；`opb` 不使用（本模块不读取该字段） |
 
-issue 载荷为 `sf_falu_issue_{opcode,rd,warp_id,lane_mask,opa,opb}`（intf_spec §2），不携带 `pc`/`imm`/`opc` 字段。
+issue 载荷为 `ws_falu_issue_{opcode,rd,warp_id,lane_mask,opa,opb}`（intf_spec §2），不携带 `pc`/`imm`/`opc` 字段。
 
 ### 1.4 数值约定
 
@@ -58,7 +58,7 @@ issue 载荷为 `sf_falu_issue_{opcode,rd,warp_id,lane_mask,opa,opb}`（intf_spe
 - 所有输出为寄存器输出，`clk` 上升沿更新；
 - 模块间握手统一遵循 intf_spec §1.2 的 vld/rdy 协议：`vld && rdy` 同时为高的时钟上升沿发生一次传输；`vld` 拉起后源模块保持 `vld` 与全部载荷稳定直至握手完成；`vld` 不组合依赖于 `rdy`；
 - 复位为低电平有效异步复位（intf_spec §1.3），复位期间全部 `vld = 0`；
-- 单条指令在途（对应 cmodel `has_issue`）：`falu_sf_issue_rdy` 仅在空闲时为 1；
+- 单条指令在途（对应 cmodel `has_issue`）：`falu_ws_issue_rdy` 仅在空闲时为 1；
 - 运算在 issue 握手当拍完成，结果于该拍末沿进入输出级寄存器；自握手后拍起按 §1.2 的完成路径顺序发出事务。
 
 ### 1.6 与 C 模型的对应关系
@@ -69,11 +69,11 @@ issue 载荷为 `sf_falu_issue_{opcode,rd,warp_id,lane_mask,opa,opb}`（intf_spe
 |---|---|
 | `has_issue` | `state != S_IDLE` |
 | `wb_stage == 1` | `state == S_WB`（`falu_rf_wb_vld`） |
-| `wb_stage == 2` | `state == S_WBD`（`falu_sf_wbdone_vld`） |
+| `wb_stage == 2` | `state == S_WBD`（`falu_ws_wbdone_vld`） |
 | `f32_mul` / `f32_add` / `f32_neg`（softfloat.c） | 每 lane 组合数据通路（§5），位精确一致 |
 | 未命中 `lane_mask` 的 lane `wdata[l] = 0` | lane 门控（§5.1） |
 | 消费者清零 `vld` 表示收走 | 下游 `rdy` 握手 |
-| `s->err`（非法 opcode 置错） | 不实现：协议约束 sf 只发合法操作码（§9 条 3），本模块无错误端口 |
+| `s->err`（非法 opcode 置错） | 不实现：协议约束 ws 只发合法操作码（§9 条 3），本模块无错误端口 |
 
 偏差说明：
 
@@ -83,20 +83,20 @@ issue 载荷为 `sf_falu_issue_{opcode,rd,warp_id,lane_mask,opa,opb}`（intf_spe
 
 功能验收为事务级等价（ma_spec §1.7：周期只作观测项，不作验收项）：
 
-- 三条通道（`sf_falu_issue`、`falu_rf_wb`、`falu_sf_wbdone`）的事务序列逐笔一致，载荷位精确；
+- 三条通道（`ws_falu_issue`、`falu_rf_wb`、`falu_ws_wbdone`）的事务序列逐笔一致，载荷位精确；
 - 每条指令的完成路径与发出顺序与 §1.2 一致；
-- 握手不变量：`vld` 保持期载荷稳定；复位期间 `vld` 恒 0；`falu_sf_issue_rdy` 与在途状态一致。
+- 握手不变量：`vld` 保持期载荷稳定；复位期间 `vld` 恒 0；`falu_ws_issue_rdy` 与在途状态一致。
 
 ---
 
 ## 2. 端口
 
-端口命名、方向与位宽见 intf_spec §6（issue 载荷字段见 intf_spec §2；单源规则见 intf_spec §1）。`clk`/`rst_n` 按 intf_spec §1.3 携带。无模块级增设端口。
+端口命名、方向与位宽见 intf_spec §5（issue 载荷字段见 intf_spec §2；单源规则见 intf_spec §1）。`clk`/`rst_n` 按 intf_spec §1.3 携带。无模块级增设端口。
 
 模块补充（行为约束，详见 §9）：
 
-- `falu_sf_issue_rdy` 仅在 `S_IDLE` 为 1；
-- `sf_falu_issue_opb` 在 FNEG 时不被读取（§1.3）。
+- `falu_ws_issue_rdy` 仅在 `S_IDLE` 为 1；
+- `ws_falu_issue_opb` 在 FNEG 时不被读取（§1.3）。
 
 ---
 
@@ -126,7 +126,7 @@ issue 载荷为 `sf_falu_issue_{opcode,rd,warp_id,lane_mask,opa,opb}`（intf_spe
 | `wbd_warp_id` | 2 | 0 | wbdone 载荷 |
 | `wbd_rd` | 5 | 0 | wbdone 载荷 |
 
-组合输出：`falu_sf_issue_rdy = (state == S_IDLE)`；`falu_rf_wb_vld = (state == S_WB)`；`falu_sf_wbdone_vld = (state == S_WBD)`。两条输出通道的载荷在各自 `vld` 保持期内由寄存值导出，稳定。
+组合输出：`falu_ws_issue_rdy = (state == S_IDLE)`；`falu_rf_wb_vld = (state == S_WB)`；`falu_ws_wbdone_vld = (state == S_WBD)`。两条输出通道的载荷在各自 `vld` 保持期内由寄存值导出，稳定。
 
 ---
 
@@ -212,7 +212,7 @@ res[l] = { ~opa[l][31], opa[l][30:0] }
 |---|---|---|
 | `S_IDLE` | 2'd0 | 空闲，可接受 issue |
 | `S_WB` | 2'd1 | 写回段：`falu_rf_wb_vld` 保持至握手 |
-| `S_WBD` | 2'd2 | 写回完成段：`falu_sf_wbdone_vld` 保持至握手 |
+| `S_WBD` | 2'd2 | 写回完成段：`falu_ws_wbdone_vld` 保持至握手 |
 
 复位释放后进入 `S_IDLE`。
 
@@ -220,12 +220,12 @@ res[l] = { ~opa[l][31], opa[l][30:0] }
 
 `S_IDLE`：
 
-1. `falu_sf_issue_rdy = 1`；
+1. `falu_ws_issue_rdy = 1`；
 2. issue 握手时当拍完成运算（§5），锁存 wb 载荷（`warp_id/rd/lane_mask/wdata`）与 wbdone 载荷（`warp_id/rd`），转 `S_WB`。
 
 `S_WB`：`falu_rf_wb_vld = 1`；握手（`wb_fire`）后转 `S_WBD`。
 
-`S_WBD`：`falu_sf_wbdone_vld = 1`；握手（`wbd_fire`）后转 `S_IDLE`。
+`S_WBD`：`falu_ws_wbdone_vld = 1`；握手（`wbd_fire`）后转 `S_IDLE`。
 
 ### 6.3 状态迁移表
 
@@ -278,7 +278,7 @@ wbd_vld   0    0    0    0    1    0
 ## 8. 复位与上电行为
 
 - `rst_n = 0`（异步）：`state` 回 `S_IDLE`，全部输出级寄存器按 §4 复位值清零，两条输出通道 `vld = 0`；
-- `rst_n` 释放：进入 `S_IDLE`，`falu_sf_issue_rdy = 1`，等待 sf 发射，不依赖任何启动握手；
+- `rst_n` 释放：进入 `S_IDLE`，`falu_ws_issue_rdy = 1`，等待 ws 发射，不依赖任何启动握手；
 - 本模块无跨指令持久状态（无谓词、无上下文），复位后即为可用的初始状态。
 
 ---
@@ -287,10 +287,10 @@ wbd_vld   0    0    0    0    1    0
 
 1. `vld` 拉起后保持，与载荷一同稳定至握手完成（intf_spec §1.2）；
 2. `vld` 不组合依赖于 `rdy`：两条输出通道 `vld` 均由状态寄存器译码，满足该条；
-3. sf 只发射合法操作码集合 {FMUL, FADD, FNEG}（sf 分派结果，与 cmodel 分派集合一致）；协议外操作码的行为不作约定（cmodel 置错误标志，本模块无错误端口）；
-4. 单条指令在途：sf 不在上一条指令完成前向本模块发射新指令（cmodel `has_issue` 口径）；`falu_sf_issue_rdy` 仅在 `S_IDLE` 为 1；
-5. `rd = 0` 时本模块照常发出 wb/wbdone：R0 写忽略由 rf 执行（intf_spec §11），记分板清除由 sf 按 `rd != 0` 执行；
-6. `lane_mask` 为发射时 active mask 快照，随路至写回（intf_spec §6 说明）；本模块不修改该快照。
+3. ws 只发射合法操作码集合 {FMUL, FADD, FNEG}（ws 分派结果，与 cmodel 分派集合一致）；协议外操作码的行为不作约定（cmodel 置错误标志，本模块无错误端口）；
+4. 单条指令在途：ws 不在上一条指令完成前向本模块发射新指令（cmodel `has_issue` 口径）；`falu_ws_issue_rdy` 仅在 `S_IDLE` 为 1；
+5. `rd = 0` 时本模块照常发出 wb/wbdone：R0 写忽略由 rf 执行（intf_spec §10），记分板清除由 ws 按 `rd != 0` 执行；
+6. `lane_mask` 为发射时 active mask 快照，随路至写回（intf_spec §5 说明）；本模块不修改该快照。
 
 ---
 
@@ -307,7 +307,7 @@ wbd_vld   0    0    0    0    1    0
 | F5 | FADD 数值类别 | 同类别组合外加：inf+(−inf)、异号精确抵消→+0、x+0（x 为规格化/非规格化/±0）、符号位规则（−0+−0=−0）、大指数差对齐 |
 | F6 | FNEG | ±0、±∞、NaN（含多种编码）、非规格化、规格化数符号位翻转，其余位不变 |
 | F7 | 协议 | `vld && !rdy` 期间载荷不变、`vld` 不撤（§9 条 1）；复位期间 `vld` 恒 0 |
-| F8 | `falu_sf_issue_rdy` 与背压 | 无在途为 1、有在途为 0；两条输出通道消费者 `rdy` 任意组合（恒 1、随机、周期图案，含长背压与背靠背零延迟）下 F1–F7 成立 |
+| F8 | `falu_ws_issue_rdy` 与背压 | 无在途为 1、有在途为 0；两条输出通道消费者 `rdy` 任意组合（恒 1、随机、周期图案，含长背压与背靠背零延迟）下 F1–F7 成立 |
 | F9 | 无死锁 | 全部事务在限界拍数内排空 |
 
 参考模型：testbench（Verilator C++ harness）直接链接 `top/cmodel`（`falu_step`），参考事务序列与 DUT 事务序列在线比对。

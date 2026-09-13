@@ -87,7 +87,7 @@ joblib。环境变量 `OPENRAM_HOME`（指向 `compiler/`）、`OPENRAM_TECH`（
 ## 仓库组织
 
 构建入口 `Makefile` 位于仓库根，与 `top/` 同级。每个硬件单元（`top` 及各子模块）
-镜像同一结构 `docs/` + `rtl/` + `tb/`；10 个子模块目录平铺于 `submodules/` 下，
+镜像同一结构 `docs/` + `rtl/` + `tb/`；9 个子模块目录平铺于 `submodules/` 下，
 与 `top/` 同级。所有编译、综合、仿真的中间文件与报告统一落仓库根的 `tmp/`
 （不入库，`make clean` 清空）。
 
@@ -113,20 +113,19 @@ easy_simt/
 │   ├── cmodel/              事务级 C 参考模型（*.c + sim_common.h；Verilator harness 直链作参考）
 │   ├── kernel/              easy_simt_kernel.cu（内核单一源）
 │   └── rtl/  tb/            顶层互连 RTL 与 testbench（预留）
-└── submodules/              10 个硬件子模块，与 top/ 同级
-    └── <子模块>/  × 10      每个镜像 docs/ + rtl/ + tb/
+└── submodules/              9 个硬件子模块，与 top/ 同级
+    └── <子模块>/  × 9       每个镜像 docs/ + rtl/ + tb/
         ├── docs/            单元规范 <单元名>_spec.md（bs/ialu/falu/lsu/icache/memif/rf 已备，其余待补）
         ├── rtl/             单元 RTL <单元名>.sv（bs/ialu/falu/lsu/icache/memif/rf 已备，其余待补）
         └── tb/              单元 testbench tb_<单元名>_vsim.cpp（C++ harness，bs/ialu/falu/lsu/icache/memif/rf 已备，其余待补）
 ```
 
 子模块位于 `submodules/` 下，与 `top/` 同级，各含 `docs/` + `rtl/` + `tb/`。
-模块全集为 10 个功能模块 + `top` 顶层互连（见 ma_spec §1.2、§1.4）：
+模块全集为 9 个功能模块 + `top` 顶层互连（见 ma_spec §1.2、§1.4）：
 
 | 目录 | 模块 |
 |---|---|
-| `sf` | SIMT Frontend |
-| `ws` | Warp Scheduler |
+| `ws` | Warp Scheduler（SIMT 前端与调度合一） |
 | `bs` | Block Scheduler |
 | `ialu` | 整数 ALU |
 | `falu` | 浮点 ALU |

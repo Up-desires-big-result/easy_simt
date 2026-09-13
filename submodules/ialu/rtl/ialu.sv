@@ -1,5 +1,5 @@
 // =============================================================================
-// easy_simt · ialu — Integer ALU（ma_spec §5）
+// easy_simt · ialu — Integer ALU（ma_spec §4）
 //
 // 整数运算 + 分支解析，8 lane 并行、锁步。谓词寄存器 P0..P3 驻留本模块
 // （SETP 写、BR 读）。完成路径（ialu_spec §1.2）：
@@ -8,7 +8,7 @@
 //   BR：  issue -> br（无写回）
 //
 // 设计依据：ialu/docs/ialu_spec_v0.1.md；
-//   端口命名与 intf_spec §5 一致（issue 载荷含 opc，intf_spec 勘误 / 偏差 C5），
+//   端口命名与 intf_spec §4 一致（issue 载荷含 opc，intf_spec 勘误 / 偏差 C5），
 //   握手协议与 intf_spec §1.2 一致。
 // =============================================================================
 `timescale 1ns/1ps
@@ -27,26 +27,26 @@ module ialu #(
     input  wire                  clk,
     input  wire                  rst_n,
 
-    // sf_ialu_issue：sf 发射（载荷为 sf 译码归一化形式，ialu_spec §1.3）
-    input  wire                  sf_ialu_issue_vld,
-    input  wire [OPCODE_W-1:0]   sf_ialu_issue_opcode,
-    input  wire [REG_AW-1:0]     sf_ialu_issue_rd,
-    input  wire [WARP_IW-1:0]    sf_ialu_issue_warp_id,
-    input  wire [NLANES-1:0]     sf_ialu_issue_lane_mask,
-    input  wire [DATA_W-1:0]     sf_ialu_issue_pc,   // 接收但内部不使用（ialu_spec §1.3）
-    input  wire [DATA_W-1:0]     sf_ialu_issue_imm,
-    input  wire [VEC_W-1:0]      sf_ialu_issue_opa,
-    input  wire [VEC_W-1:0]      sf_ialu_issue_opb,
-    input  wire [VEC_W-1:0]      sf_ialu_issue_opc,  // IMAD 第三源（偏差 C5）
-    output wire                  ialu_sf_issue_rdy,
+    // ws_ialu_issue：ws 发射（载荷为 ws 译码归一化形式，ialu_spec §1.3）
+    input  wire                  ws_ialu_issue_vld,
+    input  wire [OPCODE_W-1:0]   ws_ialu_issue_opcode,
+    input  wire [REG_AW-1:0]     ws_ialu_issue_rd,
+    input  wire [WARP_IW-1:0]    ws_ialu_issue_warp_id,
+    input  wire [NLANES-1:0]     ws_ialu_issue_lane_mask,
+    input  wire [DATA_W-1:0]     ws_ialu_issue_pc,   // 接收但内部不使用（ialu_spec §1.3）
+    input  wire [DATA_W-1:0]     ws_ialu_issue_imm,
+    input  wire [VEC_W-1:0]      ws_ialu_issue_opa,
+    input  wire [VEC_W-1:0]      ws_ialu_issue_opb,
+    input  wire [VEC_W-1:0]      ws_ialu_issue_opc,  // IMAD 第三源（偏差 C5）
+    output wire                  ialu_ws_issue_rdy,
 
-    // ialu_sf_br：分支决议回注 sf
-    output wire                  ialu_sf_br_vld,
-    output wire [WARP_IW-1:0]    ialu_sf_br_warp_id,
-    output wire [NLANES-1:0]     ialu_sf_br_taken,
-    output wire [DATA_W-1:0]     ialu_sf_br_target,
-    output wire [BRT_IW-1:0]     ialu_sf_br_brt_idx,
-    input  wire                  sf_ialu_br_rdy,
+    // ialu_ws_br：分支决议回注 ws
+    output wire                  ialu_ws_br_vld,
+    output wire [WARP_IW-1:0]    ialu_ws_br_warp_id,
+    output wire [NLANES-1:0]     ialu_ws_br_taken,
+    output wire [DATA_W-1:0]     ialu_ws_br_target,
+    output wire [BRT_IW-1:0]     ialu_ws_br_brt_idx,
+    input  wire                  ws_ialu_br_rdy,
 
     // ialu_rf_wb：结果写回
     output wire                  ialu_rf_wb_vld,
@@ -56,11 +56,11 @@ module ialu #(
     output wire [VEC_W-1:0]      ialu_rf_wb_wdata,
     input  wire                  rf_ialu_wb_rdy,
 
-    // ialu_sf_wbdone：写回完成（供 sf 清记分板）
-    output wire                  ialu_sf_wbdone_vld,
-    output wire [WARP_IW-1:0]    ialu_sf_wbdone_warp_id,
-    output wire [REG_AW-1:0]     ialu_sf_wbdone_rd,
-    input  wire                  sf_ialu_wbdone_rdy
+    // ialu_ws_wbdone：写回完成（供 ws 清记分板）
+    output wire                  ialu_ws_wbdone_vld,
+    output wire [WARP_IW-1:0]    ialu_ws_wbdone_warp_id,
+    output wire [REG_AW-1:0]     ialu_ws_wbdone_rd,
+    input  wire                  ws_ialu_wbdone_rdy
 );
 
     // ---------------- 操作码（isa_spec §1.8，本模块合法子集） ----------------
@@ -92,26 +92,26 @@ module ialu #(
     reg  [PRED_W-1:0]    pred;        // 谓词阵列：{warp, pd, lane} 位图
 
     // ---------------- issue 载荷切片 ----------------
-    wire [OPCODE_W-1:0] op    = sf_ialu_issue_opcode;
-    wire [REG_AW-1:0]   rd_i  = sf_ialu_issue_rd;
-    wire [WARP_IW-1:0]  w_i   = sf_ialu_issue_warp_id;
-    wire [NLANES-1:0]   m_i   = sf_ialu_issue_lane_mask;
-    wire [DATA_W-1:0]   imm_i = sf_ialu_issue_imm;
+    wire [OPCODE_W-1:0] op    = ws_ialu_issue_opcode;
+    wire [REG_AW-1:0]   rd_i  = ws_ialu_issue_rd;
+    wire [WARP_IW-1:0]  w_i   = ws_ialu_issue_warp_id;
+    wire [NLANES-1:0]   m_i   = ws_ialu_issue_lane_mask;
+    wire [DATA_W-1:0]   imm_i = ws_ialu_issue_imm;
 
     wire is_setp = (op == OP_SETP);
     wire is_br   = (op == OP_BR);
 
     // ---------------- 握手组合判据 ----------------
-    wire issue_fire = sf_ialu_issue_vld  && ialu_sf_issue_rdy;
+    wire issue_fire = ws_ialu_issue_vld  && ialu_ws_issue_rdy;
     wire wb_fire    = ialu_rf_wb_vld     && rf_ialu_wb_rdy;
-    wire wbd_fire   = ialu_sf_wbdone_vld && sf_ialu_wbdone_rdy;
-    wire br_fire    = ialu_sf_br_vld     && sf_ialu_br_rdy;
+    wire wbd_fire   = ialu_ws_wbdone_vld && ws_ialu_wbdone_rdy;
+    wire br_fire    = ialu_ws_br_vld     && ws_ialu_br_rdy;
 
     // ---------------- 通道 vld / rdy（寄存器输出经状态译码，ialu_spec §4） ----------------
-    assign ialu_sf_issue_rdy  = (state == S_IDLE);
+    assign ialu_ws_issue_rdy  = (state == S_IDLE);
     assign ialu_rf_wb_vld     = (state == S_WB);
-    assign ialu_sf_wbdone_vld = (state == S_WBD);
-    assign ialu_sf_br_vld     = (state == S_BR);
+    assign ialu_ws_wbdone_vld = (state == S_WBD);
+    assign ialu_ws_br_vld     = (state == S_BR);
 
     // ---------------- 每 lane 数据通路（ialu_spec §5） ----------------
     wire [VEC_W-1:0]  wdata_c;   // 运算结果（已按 lane_mask 门控）
@@ -120,9 +120,9 @@ module ialu #(
     genvar gi;
     generate
         for (gi = 0; gi < NLANES; gi = gi + 1) begin : g_lane
-            wire [DATA_W-1:0] opa_l = sf_ialu_issue_opa[gi*DATA_W +: DATA_W];
-            wire [DATA_W-1:0] opb_l = sf_ialu_issue_opb[gi*DATA_W +: DATA_W];
-            wire [DATA_W-1:0] opc_l = sf_ialu_issue_opc[gi*DATA_W +: DATA_W];
+            wire [DATA_W-1:0] opa_l = ws_ialu_issue_opa[gi*DATA_W +: DATA_W];
+            wire [DATA_W-1:0] opb_l = ws_ialu_issue_opb[gi*DATA_W +: DATA_W];
+            wire [DATA_W-1:0] opc_l = ws_ialu_issue_opc[gi*DATA_W +: DATA_W];
 
             // ---- 整数运算（§5.2） ----
             wire signed [2*DATA_W-1:0] prod = $signed(opa_l) * $signed(opb_l);
@@ -276,11 +276,11 @@ module ialu #(
     assign ialu_rf_wb_rd          = wb_rd;
     assign ialu_rf_wb_lane_mask   = wb_lane_mask;
     assign ialu_rf_wb_wdata       = wb_wdata;
-    assign ialu_sf_wbdone_warp_id = wbd_warp_id;
-    assign ialu_sf_wbdone_rd      = wbd_rd;
-    assign ialu_sf_br_warp_id     = br_warp_id;
-    assign ialu_sf_br_taken       = br_taken;
-    assign ialu_sf_br_target      = br_target;
-    assign ialu_sf_br_brt_idx     = {BRT_IW{1'b0}};   // sf 按分支 pc 查 BRT（§1.3）
+    assign ialu_ws_wbdone_warp_id = wbd_warp_id;
+    assign ialu_ws_wbdone_rd      = wbd_rd;
+    assign ialu_ws_br_warp_id     = br_warp_id;
+    assign ialu_ws_br_taken       = br_taken;
+    assign ialu_ws_br_target      = br_target;
+    assign ialu_ws_br_brt_idx     = {BRT_IW{1'b0}};   // ws 按分支 pc 查 BRT（§1.3）
 
 endmodule

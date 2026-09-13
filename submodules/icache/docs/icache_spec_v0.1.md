@@ -12,20 +12,20 @@
 
 ### 1.1 模块定位与职责
 
-icache 是直接映射指令缓存（ma_spec §8），职责：
+icache 是直接映射指令缓存（ma_spec §7），职责：
 
 - tag 比较与行阵列归本模块：32B 行 = 8 条指令（`ILINE_WORDS=8`），默认 16 行 512B（`ICACHE_LINES=16`，黄金程序静态 50 条=200B，留裕量）；
 - 命中返回：受理取指请求，命中时受理拍+1 返回指令字；
-- 缺失阻塞：缺失期间取指请求挂起（sf 侧将相应 warp 记为 IMISS），经 memif 回填整行后返回指令；
-- 无预取、无无效化（程序只读，上电后内容不变，ma_spec §8）。
+- 缺失阻塞：缺失期间取指请求挂起（ws 侧将相应 warp 记为 IMISS），经 memif 回填整行后返回指令；
+- 无预取、无无效化（程序只读，上电后内容不变，ma_spec §7）。
 
-边界：不含片外访问（memif 职责，ma_spec §10）；不含取指请求生成与 IMISS 停顿记录（sf 职责，ma_spec §2）；回填数据为 256b 单拍整行交付（memif 回填口径，intf_spec §10）。
+边界：不含片外访问（memif 职责，ma_spec §9）；不含取指请求生成与 IMISS 停顿记录（ws 职责，ma_spec §2）；回填数据为 256b 单拍整行交付（memif 回填口径，intf_spec §9）。
 
 ### 1.2 通道与事务路径
 
 | 通道 | 方向 | 事务路径 |
 |---|---|---|
-| `sf_icache_req` → `icache_sf_rsp` | sf → icache → sf | 取指请求握手 → 命中：受理拍+1 呈现指令；缺失：回填完成后呈现指令 |
+| `ws_icache_req` → `icache_ws_rsp` | ws → icache → ws | 取指请求握手 → 命中：受理拍+1 呈现指令；缺失：回填完成后呈现指令 |
 | `icache_memif_req` → `memif_icache_rsp` | icache → memif → icache | 回填请求握手（行对齐字节地址）→ 从设备延迟 → 整行数据握手 |
 
 ### 1.3 取指语义与地址口径
@@ -38,10 +38,10 @@ icache 是直接映射指令缓存（ma_spec §8），职责：
 ### 1.4 时序模型
 
 - 四态状态机（§6）：`S_IDLE` 受理取指请求并组合查找 tag/data，命中锁存指令转 `S_RSP`、缺失锁存 pc 转 `S_REQ`；
-- 请求受理与 tag 比较同拍（组合查找）；`icache_memif_req_vld`/`icache_sf_rsp_vld` 均为状态译码，不组合依赖于本通道 `rdy`；
-- 单事务在途：缺失在途或响应在途期间 `icache_sf_req_rdy = 0`；
+- 请求受理与 tag 比较同拍（组合查找）；`icache_memif_req_vld`/`icache_ws_rsp_vld` 均为状态译码，不组合依赖于本通道 `rdy`；
+- 单事务在途：缺失在途或响应在途期间 `icache_ws_req_rdy = 0`；
 - `icache_memif_rsp_rdy = (state == S_REFILL)`：等待回填数据期间恒就绪，呈现即握手；
-- 片外固定延迟 `MEM_LAT` 归 tb 侧从设备（intf_spec §10；与 memif_spec §1.5 同构：请求握手拍末沿装载倒计时、每拍递减、计数到 0 呈现响应，呈现拍 = 请求握手拍 + MEM_LAT + 1，含 MEM_LAT=0），本模块自身不加延迟；
+- 片外固定延迟 `MEM_LAT` 归 tb 侧从设备（intf_spec §9；与 memif_spec §1.5 同构：请求握手拍末沿装载倒计时、每拍递减、计数到 0 呈现响应，呈现拍 = 请求握手拍 + MEM_LAT + 1，含 MEM_LAT=0），本模块自身不加延迟；
 - 复位（低电平有效异步）期间全部输出 `vld = 0`；
 - 模块间握手统一遵循 intf_spec §1.2 的 vld/rdy 协议。
 
@@ -55,7 +55,7 @@ icache 是直接映射指令缓存（ma_spec §8），职责：
 | `rsp_pending`（指令待回送） | `state == S_RSP` |
 | `miss_pc` | `miss_pc_q` |
 | `req_sent`（回填请求已置位待消费） | `S_REQ` 期间 `icache_memif_req_vld` 保持至握手 |
-| `rsp_sent`（响应已置位待消费） | `S_RSP` 期间 `icache_sf_rsp_vld` 保持至握手 |
+| `rsp_sent`（响应已置位待消费） | `S_RSP` 期间 `icache_ws_rsp_vld` 保持至握手 |
 | `rsp_inst` | `rsp_inst_q` |
 | 命中：受理步内查阵列、置 `rsp_pending` | `S_IDLE` 握手拍组合查找，命中锁存 `rsp_inst_q` 转 `S_RSP` |
 | 缺失：受理步置 `miss` | `S_IDLE` 握手拍锁存 `miss_pc_q` 转 `S_REQ` |
@@ -84,13 +84,13 @@ icache 是直接映射指令缓存（ma_spec §8），职责：
 
 ## 2. 端口
 
-端口命名、方向与位宽见 intf_spec §8（8 端口：`sf_icache_req` / `icache_sf_rsp` / `icache_memif_req` / `memif_icache_rsp` 四通道各 vld+载荷+rdy）。`clk`/`rst_n` 按 intf_spec §1.3 携带。无模块级增设端口。
+端口命名、方向与位宽见 intf_spec §7（8 端口：`ws_icache_req` / `icache_ws_rsp` / `icache_memif_req` / `memif_icache_rsp` 四通道各 vld+载荷+rdy）。`clk`/`rst_n` 按 intf_spec §1.3 携带。无模块级增设端口。
 
 模块补充（行为约束，详见 §9）：
 
-- `icache_sf_req_rdy = (state == S_IDLE)`：空闲即就绪，不组合依赖于请求 `vld` 以外的状态；
+- `icache_ws_req_rdy = (state == S_IDLE)`：空闲即就绪，不组合依赖于请求 `vld` 以外的状态；
 - `icache_memif_rsp_rdy = (state == S_REFILL)`：等待回填期间恒就绪（呈现即握手）；
-- `icache_memif_req_vld` / `icache_sf_rsp_vld` 为状态译码，不组合依赖于本通道 `rdy`。
+- `icache_memif_req_vld` / `icache_ws_rsp_vld` 为状态译码，不组合依赖于本通道 `rdy`。
 
 ---
 
@@ -101,7 +101,7 @@ icache 是直接映射指令缓存（ma_spec §8），职责：
 | `ICACHE_LINES` | 16 | 行数（512B，ma_spec §1.6） |
 | `ILINE_WORDS` | 8 | 每行字数（32B 行 = 8 条指令，ma_spec §1.6） |
 
-派生量：`LINE_W = ILINE_WORDS×32`（回填整行位宽，intf_spec §8 的 256b 口径）；`LW = log2(ILINE_WORDS)`；`LI = log2(ICACHE_LINES)`；`TAG_W = 32−LW`（行 tag = pc>>LW 全宽比较）。约束（RTL 几何守卫）：`ICACHE_LINES`/`ILINE_WORDS` 均须为 ≥2 的 2 的幂（行索引/字偏移按位截取，对应 C 模型的 mod/掩码运算）。本模块无配置输入端口；`MEM_LAT` 不在本模块内（tb 从设备参数，§1.4）。
+派生量：`LINE_W = ILINE_WORDS×32`（回填整行位宽，intf_spec §7 的 256b 口径）；`LW = log2(ILINE_WORDS)`；`LI = log2(ICACHE_LINES)`；`TAG_W = 32−LW`（行 tag = pc>>LW 全宽比较）。约束（RTL 几何守卫）：`ICACHE_LINES`/`ILINE_WORDS` 均须为 ≥2 的 2 的幂（行索引/字偏移按位截取，对应 C 模型的 mod/掩码运算）。本模块无配置输入端口；`MEM_LAT` 不在本模块内（tb 从设备参数，§1.4）。
 
 ---
 
@@ -111,12 +111,12 @@ icache 是直接映射指令缓存（ma_spec §8），职责：
 |---|---|---|---|
 | `state` | 2 | `S_IDLE` | 状态机，见 §6 |
 | `miss_pc_q` | 32 | 0 | 缺失在途的取指 pc |
-| `rsp_inst_q` | 32 | 0 | 待回送 sf 的指令字 |
+| `rsp_inst_q` | 32 | 0 | 待回送 ws 的指令字 |
 | `data[ICACHE_LINES]` | LINE_W/行 | — | 行数据阵列（valid 门控，不复位） |
 | `tag[ICACHE_LINES]` | TAG_W/行 | — | 行 tag = pc>>LW（不复位） |
 | `valid[ICACHE_LINES]` | 1/行 | 0 | 行有效位（复位清零） |
 
-组合输出：`icache_sf_req_rdy`/`icache_memif_rsp_rdy`/`icache_memif_req_vld`/`icache_sf_rsp_vld` 见 §2；`icache_memif_req_addr` 由 `miss_pc_q` 组合导出（§5.2）；`icache_sf_rsp_inst = rsp_inst_q`。`S_IDLE` 期间对请求 pc 组合查找（§5.1）。
+组合输出：`icache_ws_req_rdy`/`icache_memif_rsp_rdy`/`icache_memif_req_vld`/`icache_ws_rsp_vld` 见 §2；`icache_memif_req_addr` 由 `miss_pc_q` 组合导出（§5.2）；`icache_ws_rsp_inst = rsp_inst_q`。`S_IDLE` 期间对请求 pc 组合查找（§5.1）。
 
 ---
 
@@ -131,7 +131,7 @@ hit    = valid[ld_idx] && (tag[ld_idx] == pc_tag)
 rd_word = data[ld_idx][pc[LW-1:0]]   // 行内字偏移选取
 ```
 
-受理拍（`sf_icache_req_vld && icache_sf_req_rdy`）完成查找：命中锁存 `rsp_inst_q <= rd_word` 转 `S_RSP`；缺失锁存 `miss_pc_q <= pc` 转 `S_REQ`（C 模型受理步同构，§1.5）。
+受理拍（`ws_icache_req_vld && icache_ws_req_rdy`）完成查找：命中锁存 `rsp_inst_q <= rd_word` 转 `S_RSP`；缺失锁存 `miss_pc_q <= pc` 转 `S_REQ`（C 模型受理步同构，§1.5）。
 
 ### 5.2 回填请求地址形成（组合）
 
@@ -167,14 +167,14 @@ rsp_inst_q   <= wr_word                  // 自回填数据行内选取（与写
 | `S_IDLE` | 0 | 空闲：受理取指请求，组合查找（§5.1）；命中转 `S_RSP`、缺失转 `S_REQ` |
 | `S_REQ` | 1 | 回填请求呈现：`icache_memif_req_vld=1` 保持至握手，握手后转 `S_REFILL` |
 | `S_REFILL` | 2 | 回填等待：`icache_memif_rsp_rdy=1`，握手拍写行并锁存指令（§5.3），转 `S_RSP` |
-| `S_RSP` | 3 | 指令呈现：`icache_sf_rsp_vld=1` 保持至握手，握手后回 `S_IDLE` |
+| `S_RSP` | 3 | 指令呈现：`icache_ws_rsp_vld=1` 保持至握手，握手后回 `S_IDLE` |
 
 ### 6.2 状态行为
 
 - `S_IDLE`：受理拍锁存命中指令或缺失 pc（§5.1）；
 - `S_REQ`：请求地址组合导出（§5.2），`vld` 保持至 `memif` 握手；
 - `S_REFILL`：呈现即握手（rdy 恒 1），握手拍写行 + 锁存指令；
-- `S_RSP`：`vld` 保持至 sf 握手，握手次拍起可受理新请求（C 模型响应清除步与请求受理步同拍发生的对应，§1.5）。
+- `S_RSP`：`vld` 保持至 ws 握手，握手次拍起可受理新请求（C 模型响应清除步与请求受理步同拍发生的对应，§1.5）。
 
 ### 6.3 状态迁移表
 
@@ -226,7 +226,7 @@ T0 受理并判缺失；T1 呈现回填请求并握手（从设备于 T1 末沿�
 
 ### 7.3 背压
 
-`sf_icache_rsp_rdy` 拉低（指令消费延迟）：
+`ws_icache_rsp_rdy` 拉低（指令消费延迟）：
 
 ```
 拍          Tq    Tq+1  Tq+2
@@ -240,8 +240,8 @@ rsp_rdy     0     0     1
 
 | 事件 | C 模型 | RTL + tb 从设备 |
 |---|---|---|
-| 取指请求受理 | 受理步（请求接收段：清 `sf_icache_req.vld`，命中置 `rsp_pending`/缺失置 `miss`） | `S_IDLE` 握手拍（命中锁存 `rsp_inst_q`/缺失锁存 `miss_pc_q`） |
-| 命中/回填后指令呈现 | 置位步（响应段：`icache_sf_rsp.vld=1`） | `S_RSP` 呈现拍（受理拍/回填握手拍+1） |
+| 取指请求受理 | 受理步（请求接收段：清 `ws_icache_req.vld`，命中置 `rsp_pending`/缺失置 `miss`） | `S_IDLE` 握手拍（命中锁存 `rsp_inst_q`/缺失锁存 `miss_pc_q`） |
+| 命中/回填后指令呈现 | 置位步（响应段：`icache_ws_rsp.vld=1`） | `S_RSP` 呈现拍（受理拍/回填握手拍+1） |
 | 指令消费检出 | 清除步（响应段：`rsp_sent` 且通道空 → 清 `rsp_pending`，同拍可受理新请求） | `S_RSP` 握手拍，次拍 `S_IDLE` 受理新请求 |
 | 回填请求置位 | 置位步（缺失段：`icache_memif_req.vld=1`） | `S_REQ` 呈现拍（受理拍+1） |
 | 回填请求受理 | memif_step 受理步 | tb 从设备握手拍（DUT 转 `S_REFILL`） |
@@ -254,8 +254,8 @@ rsp_rdy     0     0     1
 
 ## 8. 复位与上电行为
 
-- `rst_n = 0`（异步）：`state` 回 `S_IDLE`，`miss_pc_q`/`rsp_inst_q` 清零，`valid` 全清（行数据/tag 不复位，由 `valid` 门控）；输出 `vld`（`icache_memif_req_vld`、`icache_sf_rsp_vld`）恒 0；
-- `rst_n` 释放：进入 `S_IDLE`，`icache_sf_req_rdy` 即开放，不依赖任何启动握手；
+- `rst_n = 0`（异步）：`state` 回 `S_IDLE`，`miss_pc_q`/`rsp_inst_q` 清零，`valid` 全清（行数据/tag 不复位，由 `valid` 门控）；输出 `vld`（`icache_memif_req_vld`、`icache_ws_rsp_vld`）恒 0；
+- `rst_n` 释放：进入 `S_IDLE`，`icache_ws_req_rdy` 即开放，不依赖任何启动握手；
 - 复位后 cache 为全空（全部行 invalid），首次访问各行均缺失回填。
 
 ---
@@ -264,10 +264,10 @@ rsp_rdy     0     0     1
 
 1. `vld` 拉起后保持，与载荷一同稳定至握手完成（intf_spec §1.2）：指令呈现（`S_RSP`）与回填请求呈现（`S_REQ`）均由本模块保持；
 2. `vld` 不组合依赖于本通道 `rdy`：两者均为状态译码（§2）；
-3. 请求源只发合法载荷：pc 为字索引，取指地址合法性由 sf 保证（ma_spec §2 口径），本模块不检测；
-4. 单事务在途：非 `S_IDLE` 期间 `icache_sf_req_rdy = 0`；
+3. 请求源只发合法载荷：pc 为字索引，取指地址合法性由 ws 保证（ma_spec §2 口径），本模块不检测；
+4. 单事务在途：非 `S_IDLE` 期间 `icache_ws_req_rdy = 0`；
 5. `S_REFILL` 期间 `icache_memif_rsp_rdy` 恒 1（呈现即握手）；回填数据只在存在在途回填事务时呈现（tb 从设备按请求起算）；
-6. 行数据只经回填路径写入（程序只读，无无效化，ma_spec §8）。
+6. 行数据只经回填路径写入（程序只读，无无效化，ma_spec §7）。
 
 ---
 
@@ -287,4 +287,4 @@ rsp_rdy     0     0     1
 | I8 | 边界 | pc=0、程序长度边界行（跨 `imem_n`）、越界行全 0、最高字、数据极值 |
 | I9 | 无死锁 | 全部事务在限界拍数内排空 |
 
-参考模型：testbench（Verilator C++ harness）直接链接 `top/cmodel`（`icache_step`），扮演 sf 侧（取指请求源 + 指令消费者，随机背压）与 memif 侧从设备（倒计时同构 §1.4、指令段后备存储按 `imem_n` 截 0、请求通道随机就绪），参考事务序列与 DUT 事务序列按拍在线比对。
+参考模型：testbench（Verilator C++ harness）直接链接 `top/cmodel`（`icache_step`），扮演 ws 侧（取指请求源 + 指令消费者，随机背压）与 memif 侧从设备（倒计时同构 §1.4、指令段后备存储按 `imem_n` 截 0、请求通道随机就绪），参考事务序列与 DUT 事务序列按拍在线比对。

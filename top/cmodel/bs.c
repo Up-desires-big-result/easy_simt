@@ -1,5 +1,5 @@
 /* ==========================================================================
- * bs.c — Block Scheduler（ma_spec §4）
+ * bs.c — Block Scheduler（ma_spec §3）
  *
  * 纯块派发：推进 grid、下发启动上下文 {blockIdx, N, SHBASE}、收 block_done
  * 拉下一块；MAX_BLOCKS_INFLIGHT=1（v1 串行，参数位保留）。
@@ -27,22 +27,16 @@ int bs_step(sim_t *s)
         }
     }
 
-    /* 派发：两条 launch 通道同拍发起，两侧均握手成功后块启动完成 */
+    /* 派发：launch 通道握手成功后块启动完成 */
     if (b->started && !b->inflight && !b->done) {
-        if (!s->bs_sf_launch.vld && !s->sf.active) {
-            s->bs_sf_launch.p.block_idx = b->block_idx;
-            s->bs_sf_launch.p.n = (uint32_t)s->n;
-            s->bs_sf_launch.p.shbase = 0;      /* v1 单块在途恒 0 */
-            s->bs_sf_launch.vld = 1;
-        }
-        if (!s->bs_ws_launch.vld && !s->ws.launched) {
+        if (!s->bs_ws_launch.vld && !s->ws.launched && !s->ws.active) {
             s->bs_ws_launch.p.block_idx = b->block_idx;
             s->bs_ws_launch.p.n = (uint32_t)s->n;
-            s->bs_ws_launch.p.shbase = 0;
+            s->bs_ws_launch.p.shbase = 0;      /* v1 单块在途恒 0 */
             s->bs_ws_launch.vld = 1;
         }
-        /* 两侧均已接收 → 启动完成，触发复位分发 */
-        if (s->sf.active && s->ws.launched) {
+        /* ws 已接收 → 启动完成，触发复位分发 */
+        if (s->ws.launched && s->ws.active) {
             b->inflight = 1;
             sim_block_start(s);
         }

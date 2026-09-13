@@ -2,7 +2,7 @@
 
 版本：v0.1（规范文档，基线已冻结；v0.2 重构：宏观内容收拢至第 1 节，模块逐节成文）
 日期：2026-08-30
-修订记录：2026-08-25 分支处理改为**取指阻塞式**（原为"顺序流取指 + taken 冲刷"）：无预测无冲刷，预测+冲刷降为预留优化项；`stall_reason` 去除 `FLUSH`、新增 `BRSTALL`；`BR_PRED` 语义同步更新。2026-08-30 warp 调度策略改为**单 warp 独占、阻塞至完成**（原为按 warp id 顺序轮转交织）：在途至多一个 warp，停顿期整机阻塞不切换，仅 `bar.sync` 到达与 `ret` 结束回合；交织降为预留优化项，`WS_POLICY` 语义同步更新（§1.1、§1.3、§1.4、§1.6、§3）。`top/cmodel/ws.c` 暂保留旧轮转策略，随 ws 模块实现一并切换。2026-08-30 结构改进：§1.4 增设术语对照；§1.6 参数总表明确缩放规则与预留配置；§2–§11 增设信号级端口与模块级规范引用。一致性修正：§1.4、§2、§11 已取消的 sf→rf 写使能描述改与 intf_spec §1.8 一致（写使能随三源写回 `lane_mask` 随路）。其余内容定义不变。2026-09-02 rf 存储阵列由寄存器表改为 OpenRAM SRAM 宏实现（§11 补存储阵列说明）；模块外部端口与事务级语义不变。
+修订记录：2026-08-25 分支处理改为**取指阻塞式**（原为"顺序流取指 + taken 冲刷"）：无预测无冲刷，预测+冲刷降为预留优化项；`stall_reason` 去除 `FLUSH`、新增 `BRSTALL`；`BR_PRED` 语义同步更新。2026-08-30 warp 调度策略改为**单 warp 独占、阻塞至完成**（原为按 warp id 顺序轮转交织）：在途至多一个 warp，停顿期整机阻塞不切换，仅 `bar.sync` 到达与 `ret` 结束回合；交织降为预留优化项，`WS_POLICY` 语义同步更新（§1.1、§1.3、§1.4、§1.6、§2）。`top/cmodel/ws.c` 暂保留旧轮转策略，随 ws 模块实现一并切换。2026-08-30 结构改进：§1.4 增设术语对照；§1.6 参数总表明确缩放规则与预留配置；§2–§11 增设信号级端口与模块级规范引用。一致性修正：§1.4、§2、§11 已取消的 sf→rf 写使能描述改与 intf_spec §1.8 一致（写使能随三源写回 `lane_mask` 随路）。其余内容定义不变。2026-09-02 rf 存储阵列由寄存器表改为 OpenRAM SRAM 宏实现（§10 补存储阵列说明）；模块外部端口与事务级语义不变。2026-09-12 架构调整：sf（SIMT Frontend）并入 ws（Warp Scheduler），模块总数 10→9——取指、译码、冒险检测、分化控制与 warp 调度同处 ws；原 ws↔sf 内部通道（`grant`/`stall_reason`/`barrier_arrive`）取消，改为模块内部状态；`bs_sf_launch` 并入 `bs_ws_launch`（单通道、载荷含 `{blockIdx,N,SHBASE}`）；原 `sf_*` 通道统一更名为 `ws_*`；§2/§3 合并，其后节号顺移。
 适用范围：本文档定义 easy_simt SIMT 处理器的**顶层微架构**：模块划分、职责边界、模块间接口、调度与分化控制机制、存储子系统策略及参数总表。架构状态与指令语义见同目录 `isa_spec_v0.1.md`（ISA 规范），二者共同构成 RTL 实现与验证的依据。信号级端口定义见同目录 `intf_spec_v0.1.md`（接口规范）。
 
 ---
@@ -17,7 +17,7 @@ Golden kernel 语义回顾（硬件版参数）：N=1000，grid=32 块 × 32 线
 
 **设计宪章：一切最简，能顺序就顺序，能阻塞就阻塞。** 基线的判据是"正确所必需"：每一处与性能相关的机制都以参数位形式存在、默认取最简值。按此定位，后续对原型的**任何改动都构成一次可单独量化收益的优化**（如 coalesce、bank 并行、转发、多块并发等），这也是本项目的演进路线。
 
-据此宪章，v1 明确**不做**：转发/旁路（纯互锁）、分支预测与冲刷（分支阻塞取指）、coalesce（8-bank 按字偏移天然分流，仅跨行才串行）、写回/写分配（写直通不分配）、多块并发（`MAX_BLOCKS_INFLIGHT=1`）、warp 交织发射（在途单 warp，停顿期整机阻塞而非换发其它 warp，见 §3）、例外与中断（非法指令挂起并报错误标志，仅供调试）。
+据此宪章，v1 明确**不做**：转发/旁路（纯互锁）、分支预测与冲刷（分支阻塞取指）、coalesce（8-bank 按字偏移天然分流，仅跨行才串行）、写回/写分配（写直通不分配）、多块并发（`MAX_BLOCKS_INFLIGHT=1`）、warp 交织发射（在途单 warp，停顿期整机阻塞而非换发其它 warp，见 §2）、例外与中断（非法指令挂起并报错误标志，仅供调试）。
 
 ### 1.2 总体配置
 
@@ -27,7 +27,7 @@ Golden kernel 语义回顾（硬件版参数）：N=1000，grid=32 块 × 32 线
 | warp 数/块 | 4 | `NWARPS=4`，warp id 0..3 |
 | 线程数/块 | 32 | 8×4 |
 | 块执行方式 | 串行 | `MAX_BLOCKS_INFLIGHT=1`，多块并发留参数位 |
-| warp 执行方式 | 串行独占 | 在途单 warp，阻塞至完成；仅 `bar.sync`/`ret` 结束回合（`WS_POLICY`，§3） |
+| warp 执行方式 | 串行独占 | 在途单 warp，阻塞至完成；仅 `bar.sync`/`ret` 结束回合（`WS_POLICY`，§2） |
 | 架构寄存器 | 32 × 32b | R0 恒零；每 lane 独立副本 |
 | 分化栈深度 | 4 | 每 warp 独立 |
 | BRT 表项数 | 4 | 汇编器提供重聚点；黄金程序用 3 项 |
@@ -35,34 +35,33 @@ Golden kernel 语义回顾（硬件版参数）：N=1000，grid=32 块 × 32 线
 | 地址空间 | 32b | 全局/共享统一编址，基址+偏移寻址 |
 | 异常 | 无 | 非法指令挂起+错误标志 |
 
-模块总数：**10 个功能模块 + 1 个顶层互连（`top`）**。`top` 只做互连、时钟/复位与全局停顿传递，自身无逻辑。
+模块总数：**9 个功能模块 + 1 个顶层互连（`top`）**。`top` 只做互连、时钟/复位与全局停顿传递，自身无逻辑。
 
 ### 1.3 执行约定（模块分工）
 
-不引入 CPU 式分级流水概念。指令按模块分工、单发射、顺序完成：**sf** 取指/译码/发射 → **ialu/falu/lsu** 执行 → **l1sm** 访存 → **rf** 写回。各模块职责见 §2–§11。
+不引入 CPU 式分级流水概念。指令按模块分工、单发射、顺序完成：**ws** 取指/译码/发射/warp 调度 → **ialu/falu/lsu** 执行 → **l1sm** 访存 → **rf** 写回。各模块职责见 §2–§10。
 
 约定：
 
-- **单 warp 独占、阻塞至完成**。任一时刻至多一个 warp 在途；其停顿（冒险/缺失/分支决议）由整机等待，不切换 warp；仅 `bar.sync` 到达与 `ret` 结束回合（§3）。以交织发射隐藏延迟是预留优化项。
+- **单 warp 独占、阻塞至完成**。任一时刻至多一个 warp 在途；其停顿（冒险/缺失/分支决议）由整机等待，不切换 warp；仅 `bar.sync` 到达与 `ret` 结束回合（§2）。以交织发射隐藏延迟是预留优化项。
 - **互锁不转发**。数据冒险一律停顿，直到写回完成（记分板清除）后重新发射。转发是第一优化项。
-- **无分支预测、无冲刷**。遇分支即阻塞取指，等 ialu 决议完成（出 taken 向量 → sf 定出下一 PC）再取下一条；不存在错误路径指令与冲刷控制。每条分支付出确定性前端停顿（量级约 2 拍）；预测+冲刷为预留优化项（见 §1.6 `BR_PRED`）。
+- **无分支预测、无冲刷**。遇分支即阻塞取指，等 ialu 决议完成（出 taken 向量 → ws 定出下一 PC）再取下一条；不存在错误路径指令与冲刷控制。每条分支付出确定性前端停顿（量级约 2 拍）；预测+冲刷为预留优化项（见 §1.6 `BR_PRED`）。
 - **阻塞式存储**。任何缺失都停顿发起方（warp 停），不设在途请求表（MSHR）。
-- 在途至多一个 warp 且装载阻塞发射，三源写回不会同拍到达；写口固定优先级仲裁仅作结构正确性兜底（见 §11 rf）。
+- 在途至多一个 warp 且装载阻塞发射，三源写回不会同拍到达；写口固定优先级仲裁仅作结构正确性兜底（见 §10 rf）。
 
 ### 1.4 模块清单与职责
 
 | 模块 | 缩写 | 职责 | 边界说明 | 章节 |
 |---|---|---|---|---|
-| SIMT Frontend | sf | 每 warp 一份 PC；取指发起；定长译码、立即数扩展、`ld.param`；冒险检测与互锁记分板；issue 分派；SIMT 控制（active mask、分化栈、BRT、mask 更新、PC 重定向） | 分支的**判定**在 ialu，**处置**（压栈/换 mask/重定向）在 sf | §2 |
-| Warp Scheduler | ws | 单 warp 独占、阻塞至完成；汇聚停顿源；`bar.sync` 到达计数与统一释放；块完成判定（4 warp 全 `ret`） | 只管 warp 粒度行为，不碰块级决策 | §3 |
-| Block Scheduler | bs | 纯块派发：推进 grid、下发启动上下文 `{blockIdx, N, SHBASE}`、收 `block_done` 拉下一块；`MAX_BLOCKS_INFLIGHT`/SHBASE 分区逻辑的归属 | 不做屏障、不碰每周期行为 | §4 |
-| 整数 ALU | ialu | IADD/SHL/XOR/mad.lo.s32/setp；分支解析（每 lane taken 向量、目标、BRT 表项）回注 sf | setp 产每 lane 谓词，直接喂分支判定 | §5 |
-| 浮点 ALU | falu | FMUL/FADD/FNEG，IEEE-754 binary32，RN 舍入 | 8 lane 并行、锁步 | §6 |
-| Load/Store Unit | lsu | per-lane 地址生成（基址+偏移）、active mask 门控、8-lane 锁步一拍发出、请求分 shmem/global 两路、装载数据引导写回、向 ws 报停顿 | 保持薄：不含 tag 比较、不含阵列/bank | §7 |
-| Instruction Cache | icache | 直接映射指令缓存；缺失经 memif 回填、阻塞重放 | 32B 行 = 8 条指令 | §8 |
-| L1 + Shared Memory | l1sm | 统一 SRAM（8 bank），L1 与共享内存共享；类位+钉扎自指标签管理；缺失阻塞、写直通不写分配 | 行的概念归它管；8-bank 锁步、单行单拍，跨行/冲突才串行；无 coalesce | §9 |
-| Memory Interface | memif | 片外唯一通道：仲裁 icache/l1sm 回填请求，固定延迟建模 | 单请求在途 | §10 |
-| Register File | rf | 8 lane × 32×32b；译码双读口；单写口三源仲裁；lane 掩码写回；R0 恒零 | 写数据来自三个执行单元，写使能随 `lane_mask` 随路（sf 发射时快照） | §11 |
+| Warp Scheduler | ws | SIMT 前端与调度合一：每 warp 一份 PC；取指发起；定长译码、立即数扩展、`ld.param`；冒险检测与互锁记分板；issue 分派；SIMT 控制（active mask、分化栈、BRT、mask 更新、PC 重定向）；单 warp 独占调度；汇聚停顿源；`bar.sync` 到达计数与统一释放；块完成判定（4 warp 全 `ret`） | 分支的**判定**在 ialu，**处置**（压栈/换 mask/重定向）在 ws；只管 warp 粒度行为，不碰块级决策 | §2 |
+| Block Scheduler | bs | 纯块派发：推进 grid、下发启动上下文 `{blockIdx, N, SHBASE}`、收 `block_done` 拉下一块；`MAX_BLOCKS_INFLIGHT`/SHBASE 分区逻辑的归属 | 不做屏障、不碰每周期行为 | §3 |
+| 整数 ALU | ialu | IADD/SHL/XOR/mad.lo.s32/setp；分支解析（每 lane taken 向量、目标、BRT 表项）回注 ws | setp 产每 lane 谓词，直接喂分支判定 | §4 |
+| 浮点 ALU | falu | FMUL/FADD/FNEG，IEEE-754 binary32，RN 舍入 | 8 lane 并行、锁步 | §5 |
+| Load/Store Unit | lsu | per-lane 地址生成（基址+偏移）、active mask 门控、8-lane 锁步一拍发出、请求分 shmem/global 两路、装载数据引导写回、向 ws 报停顿 | 保持薄：不含 tag 比较、不含阵列/bank | §6 |
+| Instruction Cache | icache | 直接映射指令缓存；缺失经 memif 回填、阻塞重放 | 32B 行 = 8 条指令 | §7 |
+| L1 + Shared Memory | l1sm | 统一 SRAM（8 bank），L1 与共享内存共享；类位+钉扎自指标签管理；缺失阻塞、写直通不写分配 | 行的概念归它管；8-bank 锁步、单行单拍，跨行/冲突才串行；无 coalesce | §8 |
+| Memory Interface | memif | 片外唯一通道：仲裁 icache/l1sm 回填请求，固定延迟建模 | 单请求在途 | §9 |
+| Register File | rf | 8 lane × 32×32b；译码双读口；单写口三源仲裁；lane 掩码写回；R0 恒零 | 写数据来自三个执行单元，写使能随 `lane_mask` 随路（ws 发射时快照） | §10 |
 
 **术语对照**：模块的正式全称与缩写见上表，全套文档中首次出现时以全称与缩写并列。非模块术语统一如下：
 
@@ -81,8 +80,7 @@ flowchart TB
   subgraph CTRL["控制前端"]
     direction LR
     bs["bs · Block Scheduler<br/>grid推进 / 块派发 / 下发blockIdx,N,SHBASE<br/>MAX_BLOCKS_INFLIGHT / SHBASE分区"]
-    ws["ws · Warp Scheduler<br/>单warp独占 / 阻塞至屏障或完成 / 停顿汇聚<br/>bar.sync到达计数 / 凑齐统一释放"]
-    sf["sf · SIMT Frontend<br/>PC堆 / 取指 / 译码 / 互锁记分板 / issue<br/>active mask / 分化栈深4 / BRT"]
+    ws["ws · Warp Scheduler<br/>PC堆 / 取指 / 译码 / 互锁记分板 / issue<br/>active mask / 分化栈深4 / BRT<br/>单warp独占 / 阻塞至屏障或完成 / 停顿汇聚<br/>bar.sync到达计数 / 凑齐统一释放"]
   end
 
   subgraph EXEC["执行单元"]
@@ -101,36 +99,30 @@ flowchart TB
   end
 
   %% 块级控制
-  bs -- "block_launch: blockIdx,N,SHBASE" --> sf
-  bs -- "block_id / warp归属" --> ws
+  bs -- "block_launch: blockIdx,N,SHBASE" --> ws
   ws -- "block_done: 4 warp全部ret" --> bs
 
-  %% 发射对握
-  ws -- "grant: warp_id, issue_req" --> sf
-  sf -- "stall_reason: 冒险/分支阻塞" --> ws
-  sf -- "barrier_arrive: warp_id,block_id" --> ws
-
   %% 取指
-  sf -- "fetch: pc" --> icache
-  icache -- "inst / imiss停顿" --> sf
+  ws -- "fetch: pc" --> icache
+  icache -- "inst / imiss停顿" --> ws
 
   %% 寄存器堆
-  sf -- "译码读口: rs1,rs2" --> rf
-  rf -- "操作数" --> sf
+  ws -- "译码读口: rs1,rs2" --> rf
+  rf -- "操作数" --> ws
 
   %% issue与分支回注
-  sf -- "issue" --> ialu
-  sf -- "issue" --> falu
-  sf -- "issue + SHBASE基址" --> lsu
-  ialu -- "分支解析: taken向量/目标/BRT" --> sf
+  ws -- "issue" --> ialu
+  ws -- "issue" --> falu
+  ws -- "issue + SHBASE基址" --> lsu
+  ialu -- "分支解析: taken向量/目标/BRT" --> ws
 
   %% 写回与记分板
   ialu -- "结果写回" --> rf
   falu -- "结果写回" --> rf
   lsu -- "装载数据写回" --> rf
-  ialu -- "wb_done" --> sf
-  falu -- "wb_done" --> sf
-  lsu -- "wb_done / LSU排空状态" --> sf
+  ialu -- "wb_done" --> ws
+  falu -- "wb_done" --> ws
+  lsu -- "wb_done / LSU排空状态" --> ws
 
   %% 访存
   lsu -- "stall: lmiss" --> ws
@@ -153,7 +145,7 @@ flowchart TB
 | `NLANES` | 8 | lane/warp | — |
 | `NWARPS` | 4 | warp/块 | — |
 | `MAX_BLOCKS_INFLIGHT` | 1 | 并发块数 | 多块并发 |
-| `WS_POLICY` | RUN_TO_DONE | warp 选择策略（单 warp 独占，阻塞至屏障或完成，§3） | 交织轮转（延迟隐藏） |
+| `WS_POLICY` | RUN_TO_DONE | warp 选择策略（单 warp 独占，阻塞至屏障或完成，§2） | 交织轮转（延迟隐藏） |
 | `DIV_STACK_DEPTH` | 4 | 分化栈深 | — |
 | `BRT_ENTRIES` | 4 | 重聚表表项 | — |
 | `ILINE_B` | 32 | 指令行字节数 | — |
@@ -168,7 +160,7 @@ flowchart TB
 
 **缩放规则**：基线值如上表；配置变更按基线的 2^k 或 1/2^k 缩放（k 为正整数），保持 2 的幂参数（`NLANES`、`NWARPS`、`ICACHE_LINES`、`U_LINES`、`SM_LINES`、`NBANKS`、`BRT_ENTRIES`、`DIV_STACK_DEPTH`）仍为 2 的幂，使验证用例的计数与基线同构对齐。
 
-**预留配置**：以下参数基线取最简值，优化方向仅按上表"优化方向"列预留，正文不展开：`MAX_BLOCKS_INFLIGHT`（多块并发）、`WS_POLICY`（交织轮转）、`FORWARD`（转发）、`BR_PRED`（预测与冲刷）、`WRITE_POLICY`（写分配/写回）、`ICACHE_LINES`/`U_LINES`/`SM_LINES`（容量与相联度）、`MEM_LAT` 对应的突发/多通道（请求队列见 §10）。
+**预留配置**：以下参数基线取最简值，优化方向仅按上表"优化方向"列预留，正文不展开：`MAX_BLOCKS_INFLIGHT`（多块并发）、`WS_POLICY`（交织轮转）、`FORWARD`（转发）、`BR_PRED`（预测与冲刷）、`WRITE_POLICY`（写分配/写回）、`ICACHE_LINES`/`U_LINES`/`SM_LINES`（容量与相联度）、`MEM_LAT` 对应的突发/多通道（请求队列见 §9）。
 
 ### 1.7 验证与验收
 
@@ -180,38 +172,19 @@ flowchart TB
 |---|---|---|---|
 | V1 | 功能位精确 | `out[]` 与 ISS 逐位一致（误差 0） | tb 比对 |
 | V2 | 共享内存访问次数 | 2048（与基线 shmem_insn 完全一致） | l1sm 计数 |
-| V3 | 数据分支分化 | 125/128 warp（8-lane 粒度） | sf 分化计数 |
-| V4 | 边界分支分化 | 0（1000=125×8 恰在 warp 边界，属 8-lane 粒度伪像；如需复现边界分化需取 N 非 8 倍数） | sf 分化计数 |
+| V3 | 数据分支分化 | 125/128 warp（8-lane 粒度） | ws 分化计数 |
+| V4 | 边界分支分化 | 0（1000=125×8 恰在 warp 边界，属 8-lane 粒度伪像；如需复现边界分化需取 N 非 8 倍数） | ws 分化计数 |
 | V5 | 无死锁 | 4 屏障×32 块全部释放、`ret` 正常收束、grid 停机 | tb 超时断言 |
 
 V3 与 32-lane 基线"全分化"的差异纯属粒度效应：8 lane 下部分 warp 恰好整 warp 同号，属预期行为，ISS 已给出同粒度对照数据。
 
 ---
 
-## 2. sf — SIMT Frontend
+## 2. ws — Warp Scheduler
 
-**职责**：每 warp 一份 PC、active mask（8b）、分化栈（深 4，表项 `{mask, 重聚PC}`）；取指发起、定长译码、立即数扩展、`ld.param`；冒险检测与互锁（记分板）；issue 分派；SIMT 分化控制。分支的**判定**在 ialu，**处置**在 sf。
+**职责**：SIMT 前端与 warp 调度合一，只管 warp 粒度行为，不碰块级决策。每 warp 一份 PC、active mask（8b）、分化栈（深 4，表项 `{mask, 重聚PC}`）；取指发起、定长译码、立即数扩展、`ld.param`；冒险检测与互锁（记分板）；issue 分派；SIMT 分化控制；单 warp 独占调度；汇聚停顿源；`bar.sync` 到达计数与统一释放；块完成判定。分支的**判定**在 ialu，**处置**在 ws。
 
-**取指**：按 ws 授予（`grant{warp_id}`）向 icache 发 `fetch{pc}`，收 `fetch_resp{inst}`；缺失期间该 warp 停（IMISS）。遇分支阻塞取指，等 ialu 决议后取下一条，无冲刷。
-
-**冒险检测与互锁**：sf 用记分板（每 warp 寄存器忙位）检测数据冒险；检测到冒险即停顿发射，直至写回完成（`wb_done` 清除）。`bar.sync` 到达发射点时检查**该 warp 在 lsu 无未退休访存**，未排空按 HAZARD 互锁（屏障可见性兜底）。
-
-**分化控制**：
-
-- **判定**（ialu 经 `branch_res{taken[7:0], target, brt_entry}` 回注）：taken≠0 且 not-taken≠0 方为**分化**；全 taken 或全 not-taken 均为**均匀分支**，不压栈。"全不跳"即均匀分支，不得误判为分化。
-- **处置**：分化→压 `{当前mask, 重聚PC(查BRT)}` 入栈、mask 置 taken 子集、PC 跳目标；JOIN→弹栈恢复 mask；均匀 taken→直接重定向；均匀 not-taken→顺序流。
-- **BRT**：重聚点表由汇编器随程序提供（黄金程序 3 项 {9→13, 21→46, 46→49}），sf 内为只读小表，分支指令携带表项索引。
-- 重定向一律等 ialu 决议完成后生效；决议前 sf 阻塞取指，无冲刷。
-
-**接口**：收 `bs_sf_launch`（装载 `ld.param` 上下文、复位各 warp PC 与 SIMT 状态）、`ws_sf_grant`、`icache_sf_rsp`、`rf→sf 操作数`、`{ialu,falu,lsu}→sf wb_done`、`ialu_sf_br`；发 `sf_ws_stall{warp_id,reason}`、`sf_ws_bar{warp_id,block_id}`、`sf_icache_req{pc}`、`sf→rf 读口{rs1,rs2}`、`sf→{ialu,falu,lsu} issue`（lsu 另含 `shbase`；`bar.sync` 不下发执行单元，由 sf 直接走 barrier_arrive）。原 `sf→rf 写使能` 已取消，写使能并入三源写回通道的 `lane_mask` 随路（intf_spec §1.8）。
-
-**信号级端口与模块级规范**：信号级端口见 intf_spec §2；模块级规范未成文，当前参考实现为 `top/cmodel/sf.c`。
-
-## 3. ws — Warp Scheduler
-
-**职责**：只管 warp 粒度行为，不碰块级决策。单 warp 独占、阻塞至完成；汇聚停顿源；`bar.sync` 到达计数与统一释放；块完成判定。
-
-**调度策略（`WS_POLICY = RUN_TO_DONE`）**：任一时刻至多一个 warp 在途，`ws_sf_grant` 只授予当前 warp，该 warp 独占执行。回合仅在两种情况下结束，随后按 warp id 顺序推进到下一个可发射的 warp：
+**调度策略（`WS_POLICY = RUN_TO_DONE`）**：任一时刻至多一个 warp 在途，调度只授予当前 warp，该 warp 独占执行。回合仅在两种情况下结束，随后按 warp id 顺序推进到下一个可发射的 warp：
 
 1. warp 执行 `ret`：置 DONE，推进到下一个非 DONE 的 warp；
 2. warp 到达 `bar.sync`：置 BARRIER，推进到下一个非 DONE 且非 BARRIER 的 warp——屏障的等待条件只能由后续 warp 到达满足，此切换为被迫而非主动。
@@ -220,17 +193,28 @@ V3 与 32-lane 基线"全分化"的差异纯属粒度效应：8 lane 下部分 w
 
 **起步与屏障恢复**：块启动后自 warp 0 开始；屏障凑齐释放后，自等待中 id 最小的 warp 恢复发射，仍按上述策略执行。块内推进序列完全确定：无轮转指针、无年龄表、无策略表。
 
-**停顿源枚举**：`stall_reason ∈ { NONE, HAZARD, IMISS, LMISS, BARRIER, BRSTALL, DONE }`，对每 warp 汇聚各来源：HAZARD（sf 记分板互锁）、IMISS（sf 转发取指缺失）、LMISS（lsu 上报数据缺失）、BARRIER（等屏障）、BRSTALL（分支决议中）、DONE（已 `ret`）。
+**取指**：调度选定 warp 后向 icache 发 `fetch{pc}`，收 `fetch_resp{inst}`；缺失期间该 warp 停（IMISS）。遇分支阻塞取指，等 ialu 决议后取下一条，无冲刷。
 
-**屏障流程**：sf 发 `barrier_arrive{warp_id, block_id}` 后 warp 置 BARRIER、PC 暂存于屏障次条；ws 按 `block_id` 计数，凑齐 4 个 warp 同拍清除四者 BARRIER 并复位计数器、统一释放。
+**冒险检测与互锁**：ws 用记分板（每 warp 寄存器忙位）检测数据冒险；检测到冒险即停顿发射，直至写回完成（`wb_done` 清除）。`bar.sync` 到达发射点时检查**该 warp 在 lsu 无未退休访存**，未排空按 HAZARD 互锁（屏障可见性兜底）。
+
+**分化控制**：
+
+- **判定**（ialu 经 `branch_res{taken[7:0], target, brt_entry}` 回注）：taken≠0 且 not-taken≠0 方为**分化**；全 taken 或全 not-taken 均为**均匀分支**，不压栈。"全不跳"即均匀分支，不得误判为分化。
+- **处置**：分化→压 `{当前mask, 重聚PC(查BRT)}` 入栈、mask 置 taken 子集、PC 跳目标；JOIN→弹栈恢复 mask；均匀 taken→直接重定向；均匀 not-taken→顺序流。
+- **BRT**：重聚点表由汇编器随程序提供（黄金程序 3 项 {9→13, 21→46, 46→49}），ws 内为只读小表，分支指令携带表项索引。
+- 重定向一律等 ialu 决议完成后生效；决议前 ws 阻塞取指，无冲刷。
+
+**停顿源枚举**：`stall_reason ∈ { NONE, HAZARD, IMISS, LMISS, BARRIER, BRSTALL, DONE }`，对每 warp 汇聚各来源：HAZARD（ws 记分板互锁）、IMISS（ws 取指缺失）、LMISS（lsu 上报数据缺失）、BARRIER（等屏障）、BRSTALL（分支决议中）、DONE（已 `ret`）。
+
+**屏障流程**：warp 到达 `bar.sync` 且该 warp 在 lsu 已排空后置 BARRIER、PC 暂存于屏障次条；ws 按块计数，凑齐 4 个 warp 同拍清除四者 BARRIER 并复位计数器、统一释放。
 
 **完成判定**：warp `ret` 置 DONE；4 warp 全 DONE 发 `block_done`。
 
-**接口**：收 `bs_ws_launch`、`sf_ws_stall`、`sf_ws_bar`、`lsu_ws_stall`；发 `ws_sf_grant{warp_id,issue_req}`、`ws_bs_bdone`。
+**接口**：收 `bs_ws_launch{block_idx,N,shbase}`（装载 `ld.param` 上下文、复位各 warp PC 与 SIMT 状态及调度状态）、`icache_ws_rsp{inst}`、`rf→ws 操作数`、`{ialu,falu,lsu}→ws wb_done`、`ialu_ws_br`、`lsu_ws_stall{warp_id,reason}`；发 `ws_icache_req{pc}`、`ws→rf 读口{rs1,rs2}`、`ws→{ialu,falu,lsu} issue`（lsu 另含 `shbase`；`bar.sync` 不下发执行单元，由 ws 直接计数）、`ws_bs_bdone{block_idx}`。原 `ws→rf 写使能` 已取消，写使能并入三源写回通道的 `lane_mask` 随路（intf_spec §1.8）。
 
-**信号级端口与模块级规范**：信号级端口见 intf_spec §3；模块级规范未成文；`top/cmodel/ws.c` 暂为旧轮转策略，随模块实现切换为 §3 策略。
+**信号级端口与模块级规范**：信号级端口见 intf_spec §2；模块级规范未成文，当前参考实现为 `top/cmodel/ws.c`（暂为旧轮转策略，随模块实现切换为 §2 调度策略）。
 
-## 4. bs — Block Scheduler
+## 3. bs — Block Scheduler
 
 **职责**：纯块派发，不做屏障、不碰每周期行为。推进 grid、下发启动上下文、收 `block_done` 拉下一块；`MAX_BLOCKS_INFLIGHT`/SHBASE 分区逻辑的归属。
 
@@ -238,47 +222,47 @@ V3 与 32-lane 基线"全分化"的差异纯属粒度效应：8 lane 下部分 w
 
 **上下文**：`{blockIdx, N}` 供 `ld.param` 读取；`SHBASE` 随 issue 包进入 lsu 作共享内存基址。v1 单块在途 SHBASE 恒为 0；多块并发时每块独立分区，参数 `MAX_BLOCKS_INFLIGHT` 控制（v1 为 1，逻辑预留）。
 
-**接口**：发 `bs_sf_launch{block_idx,N,shbase}`、`bs_ws_launch{block_id/warp归属}`；收 `ws_bs_bdone`。
+**接口**：发 `bs_ws_launch{block_idx,N,shbase}`；收 `ws_bs_bdone`。
 
-**信号级端口与模块级规范**：信号级端口见 intf_spec §4；模块级规范见 `submodules/bs/docs/bs_spec_v0.1.md`。
+**信号级端口与模块级规范**：信号级端口见 intf_spec §3；模块级规范见 `submodules/bs/docs/bs_spec_v0.1.md`。
 
-## 5. ialu — Integer ALU
+## 4. ialu — Integer ALU
 
 **职责**：整数运算 + 分支解析。IADD/SHL/XOR/mad.lo.s32/setp；setp 产每 lane 谓词直接喂分支判定。数据通路 **8 lane 并行、锁步**：一拍对 8 个 lane 同时运算，产出 wdata[8×32]。
 
-**分支解析**：算出每 lane taken 向量、跳转目标、BRT 表项索引，经 `ialu_sf_br` 回注 sf（判定在 ialu、处置在 sf）。
+**分支解析**：算出每 lane taken 向量、跳转目标、BRT 表项索引，经 `ialu_ws_br` 回注 ws（判定在 ialu、处置在 ws）。
 
-**接口**：收 `sf_ialu_issue`；发 `ialu_sf_br{taken[7:0],target,brt_entry}`、`ialu_rf_wb{wdata}`、`ialu_sf_wbdone{warp_id,rd}`。
+**接口**：收 `ws_ialu_issue`；发 `ialu_ws_br{taken[7:0],target,brt_entry}`、`ialu_rf_wb{wdata}`、`ialu_ws_wbdone{warp_id,rd}`。
 
-**信号级端口与模块级规范**：信号级端口见 intf_spec §5；模块级规范见 `submodules/ialu/docs/ialu_spec_v0.1.md`。
+**信号级端口与模块级规范**：信号级端口见 intf_spec §4；模块级规范见 `submodules/ialu/docs/ialu_spec_v0.1.md`。
 
-## 6. falu — Floating-point ALU
+## 5. falu — Floating-point ALU
 
 **职责**：提供 FMUL/FADD/FNEG，按 IEEE-754 binary32、舍入到最近偶数（RN）执行标准乘法与加法。数据通路 **8 lane 并行、锁步**：一拍对 8 个 lane 同时运算，产出 wdata[8×32]。
 
-**接口**：收 `sf_falu_issue`；发 `falu_rf_wb{wdata}`、`falu_sf_wbdone{warp_id,rd}`。
+**接口**：收 `ws_falu_issue`；发 `falu_rf_wb{wdata}`、`falu_ws_wbdone{warp_id,rd}`。
 
-**信号级端口与模块级规范**：信号级端口见 intf_spec §6；模块级规范见 `submodules/falu/docs/falu_spec_v0.1.md`。
+**信号级端口与模块级规范**：信号级端口见 intf_spec §5；模块级规范见 `submodules/falu/docs/falu_spec_v0.1.md`。
 
-## 7. lsu — Load/Store Unit
+## 6. lsu — Load/Store Unit
 
 **职责**：保持薄——不含 tag 比较、不含阵列/bank。per-lane 地址生成（基址+偏移）、active mask 门控、**8-lane 锁步**一拍发出一个 8-lane 请求、请求分 shmem/global 两路、装载数据引导写回、向 ws 报停顿。
 
 **8-lane 锁步**：与 ialu/falu 口径一致，lsu 数据通路 8 lane 宽、锁步执行——一条访存指令在一拍内对全部活跃 lane 同时生成地址、发起访问，**不逐 lane 串行**。地址 = 基址（issue 包随路，每 lane 一份）+ 符号扩展偏移；共享内存再叠 bs 下发的 SHBASE。操作码区分 LDG/STG/LDS/STS；mask 外 lane 不发起访问。
 
-**接口**：收 `sf_lsu_issue`（含 `shbase`）；发 `lsu_l1sm_req{rw,sm,addr[8×32],wdata[8×32],mask[8]}`、`lsu_ws_stall{warp_id,reason=LMISS}`、`lsu_rf_wb{wdata[8×32]}`、`lsu_sf_wbdone{warp_id,rd}`（借此上报排空状态）；收 `l1sm_lsu_rsp{rdata[8×32]}`。写通存储等写应答返回才算完成。
+**接口**：收 `ws_lsu_issue`（含 `shbase`）；发 `lsu_l1sm_req{rw,sm,addr[8×32],wdata[8×32],mask[8]}`、`lsu_ws_stall{warp_id,reason=LMISS}`、`lsu_rf_wb{wdata[8×32]}`、`lsu_ws_wbdone{warp_id,rd}`（借此上报排空状态）；收 `l1sm_lsu_rsp{rdata[8×32]}`。写通存储等写应答返回才算完成。
 
-**信号级端口与模块级规范**：信号级端口见 intf_spec §7；模块级规范见 `submodules/lsu/docs/lsu_spec_v0.1.md`。
+**信号级端口与模块级规范**：信号级端口见 intf_spec §6；模块级规范见 `submodules/lsu/docs/lsu_spec_v0.1.md`。
 
-## 8. icache — Instruction Cache
+## 7. icache — Instruction Cache
 
 **职责**：直接映射指令缓存，32B 行（8 条指令）。缺失阻塞：缺失期间该取指请求挂起、warp 停（IMISS），经 memif 回填整行后重放。无预取、无无效化（程序只读，上电后内容不变）。容量参数 `ICACHE_LINES` 默认 16 行（512B，黄金程序静态 50 条=200B，留裕量）。
 
-**接口**：收 `sf_icache_req{pc}`；发 `icache_sf_rsp{inst}`、`icache_memif_req{addr}`；收 `memif_icache_rsp{line}`。
+**接口**：收 `ws_icache_req{pc}`；发 `icache_ws_rsp{inst}`、`icache_memif_req{addr}`；收 `memif_icache_rsp{line}`。
 
-**信号级端口与模块级规范**：信号级端口见 intf_spec §8；模块级规范见 `submodules/icache/docs/icache_spec_v0.1.md`。
+**信号级端口与模块级规范**：信号级端口见 intf_spec §7；模块级规范见 `submodules/icache/docs/icache_spec_v0.1.md`。
 
-## 9. l1sm — L1 + Shared Memory（统一 SRAM）
+## 8. l1sm — L1 + Shared Memory（统一 SRAM）
 
 **职责**：L1 与共享内存**共用一块统一 SRAM**（数据阵列按字偏移分 8 bank + 一份 tag 阵列），行的概念归它管；v1 无 coalesce。内部按 `is_shmem` 分流到两套 tag 规约。
 
@@ -296,17 +280,17 @@ V3 与 32-lane 基线"全分化"的差异纯属粒度效应：8 lane 下部分 w
 
 **接口**：收 `lsu_l1sm_req{rw,sm,addr[8×32],wdata[8×32],mask[8]}`；发 `l1sm_lsu_rsp{rdata[8×32]}`（单行单拍；缺失阻塞至回填完成）、`l1sm_memif_req{addr}`；收 `memif_l1sm_rsp{line}`。
 
-**信号级端口与模块级规范**：信号级端口见 intf_spec §9；模块级规范未成文，当前参考实现为 `top/cmodel/l1sm.c`。
+**信号级端口与模块级规范**：信号级端口见 intf_spec §8；模块级规范未成文，当前参考实现为 `top/cmodel/l1sm.c`。
 
-## 10. memif — Memory Interface
+## 9. memif — Memory Interface
 
 **职责**：片外唯一通道。仲裁 icache 与 l1sm 的回填请求，**固定优先级（icache 优先）**，单请求在途；片外延迟建模为固定值 `MEM_LAT`（默认 20，与 ISS 基线同参）。请求队列留参数位，v1 不实现。对外为 AXI4 主设备（信号级见接口规范）。
 
 **接口**：收 `icache_memif_req{addr}`、`l1sm_memif_req{addr}`；发 `memif_icache_rsp{line}`、`memif_l1sm_rsp{line}`；对外 AXI4（AW/W/B/AR/R）。
 
-**信号级端口与模块级规范**：信号级端口见 intf_spec §10；模块级规范见 `submodules/memif/docs/memif_spec_v0.1.md`。
+**信号级端口与模块级规范**：信号级端口见 intf_spec §9；模块级规范见 `submodules/memif/docs/memif_spec_v0.1.md`。
 
-## 11. rf — Register File
+## 10. rf — Register File
 
 **职责**：8 lane × 32 寄存器 × 32b，每 lane 独立；R0 恒零（写忽略、读恒 0）。
 
@@ -314,10 +298,10 @@ V3 与 32-lane 基线"全分化"的差异纯属粒度效应：8 lane 下部分 w
 
 **写**：单写口，三源固定优先级仲裁 **lsu > ialu > falu**（v1 单发射顺序下竞争窗口极小，仲裁仅为结构正确性兜底）。
 
-**lane 掩码随路**：发射时 sf 快照当前 active mask 进入 issue 包，写回时作为写使能——分化路径上的指令只写活跃 lane，语义与 ISA 规范一致。
+**lane 掩码随路**：发射时 ws 快照当前 active mask 进入 issue 包，写回时作为写使能——分化路径上的指令只写活跃 lane，语义与 ISA 规范一致。
 
-**接口**：收 `sf_rf_rd{rs1,rs2}`、`{ialu,falu,lsu}_rf_wb{wdata,lane_mask}`（写使能随 `lane_mask` 随路，intf_spec §1.8）；发 `rf→sf 操作数`。
+**接口**：收 `ws_rf_rd{rs1,rs2}`、`{ialu,falu,lsu}_rf_wb{wdata,lane_mask}`（写使能随 `lane_mask` 随路，intf_spec §1.8）；发 `rf→ws 操作数`。
 
 **存储阵列**：OpenRAM 生成的 SRAM 宏（128 字 × 32 位、双 RW 口，freepdk45），每 lane 一对镜像宏共 16 宏（`make sram` 生成），实现细节见 `rf_spec` §5.1。
 
-**信号级端口与模块级规范**：信号级端口见 intf_spec §11；模块级规范见 `submodules/rf/docs/rf_spec_v0.1.md`。
+**信号级端口与模块级规范**：信号级端口见 intf_spec §10；模块级规范见 `submodules/rf/docs/rf_spec_v0.1.md`。

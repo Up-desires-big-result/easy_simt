@@ -33,15 +33,15 @@ int rf_step(sim_t *s)
     }
 
     /* ---- 读口：请求 → 应答（单在途，顺序对应） ---- */
-    if (s->sf_rf_rd.vld && !s->rf_sf_rddata.vld) {
-        int w = s->sf_rf_rd.p.warp_id;
-        int rs1 = s->sf_rf_rd.p.rs1, rs2 = s->sf_rf_rd.p.rs2;
+    if (s->ws_rf_rd.vld && !s->rf_ws_rddata.vld) {
+        int w = s->ws_rf_rd.p.warp_id;
+        int rs1 = s->ws_rf_rd.p.rs1, rs2 = s->ws_rf_rd.p.rs2;
         for (int l = 0; l < NLANES; l++) {
-            s->rf_sf_rddata.p.a[l] = rs1 ? r->r[w][rs1][l] : 0;
-            s->rf_sf_rddata.p.b[l] = rs2 ? r->r[w][rs2][l] : 0;
+            s->rf_ws_rddata.p.a[l] = rs1 ? r->r[w][rs1][l] : 0;
+            s->rf_ws_rddata.p.b[l] = rs2 ? r->r[w][rs2][l] : 0;
         }
-        s->rf_sf_rddata.vld = 1;
-        s->sf_rf_rd.vld = 0;
+        s->rf_ws_rddata.vld = 1;
+        s->ws_rf_rd.vld = 0;
         s->st.fires++;
         fired++;
     }

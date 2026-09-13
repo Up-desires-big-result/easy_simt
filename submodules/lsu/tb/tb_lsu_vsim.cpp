@@ -3,10 +3,10 @@
 //
 // 结构：Verilator 把 submodules/lsu/rtl/lsu.sv 编译为 C++ 模型（Vlsu）；
 // 本 harness 驱动时钟/复位/issue 激励，扮演 l1sm（消费请求、按随机延迟
-// 呈现响应）、rf / sf / ws 三个消费者（随机背压），参考侧直接链接
+// 呈现响应）、rf / ws / ws 三个消费者（随机背压），参考侧直接链接
 // top/cmodel（lsu_step），按协议语义逐拍锁步比对五条通道的握手发生拍与
 // 载荷：lsu_l1sm_req（rw/sm/mask/addr/wdata）、l1sm_lsu_rsp 消费拍、
-// lsu_rf_wb（warp_id/rd/lane_mask/wdata）、lsu_sf_wbdone、
+// lsu_rf_wb（warp_id/rd/lane_mask/wdata）、lsu_ws_wbdone、
 // lsu_ws_stall（warp_id/reason，含 LMISS 同拍置位 / R_NONE 空闲拍 /
 // 通道在途丢弃 / R_NONE 跨指令滞留）。
 //
@@ -36,7 +36,7 @@ static uint32_t rnd32(void)
     return ((uint32_t)rnd() << 17) ^ ((uint32_t)rnd() << 6) ^ (uint32_t)rnd();
 }
 
-// ---------------- 激励队列（sf 侧发射序列，vld 保持至握手） ----------------
+// ---------------- 激励队列（ws 侧发射序列，vld 保持至握手） ----------------
 static lsu_issue_t txq[65536];
 static int txq_h, txq_t;
 static void tx_push(const lsu_issue_t *t) { txq[txq_t++ & 65535] = *t; }
@@ -102,27 +102,27 @@ static void run_test(Vlsu *top, VerilatedVcdC *tfp, const char *name)
 
     // ---- 复位 ----
     top->rst_n = 0;
-    top->sf_lsu_issue_vld = 0;
-    top->sf_lsu_issue_opcode = 0;
-    top->sf_lsu_issue_rd = 0;
-    top->sf_lsu_issue_warp_id = 0;
-    top->sf_lsu_issue_lane_mask = 0;
+    top->ws_lsu_issue_vld = 0;
+    top->ws_lsu_issue_opcode = 0;
+    top->ws_lsu_issue_rd = 0;
+    top->ws_lsu_issue_warp_id = 0;
+    top->ws_lsu_issue_lane_mask = 0;
     for (int l = 0; l < NLANES; l++) {
-        top->sf_lsu_issue_opa[l] = 0;
-        top->sf_lsu_issue_opb[l] = 0;
+        top->ws_lsu_issue_opa[l] = 0;
+        top->ws_lsu_issue_opb[l] = 0;
     }
-    top->sf_lsu_issue_imm = 0;
-    top->sf_lsu_issue_shbase = 0;
+    top->ws_lsu_issue_imm = 0;
+    top->ws_lsu_issue_shbase = 0;
     top->l1sm_lsu_rsp_vld = 0;
     for (int l = 0; l < NLANES; l++) top->l1sm_lsu_rsp_rdata[l] = 0;
     top->l1sm_lsu_req_rdy = 0;
     top->rf_lsu_wb_rdy = 0;
-    top->sf_lsu_wbdone_rdy = 0;
+    top->ws_lsu_wbdone_rdy = 0;
     top->ws_lsu_stall_rdy = 0;
     top->clk = 0; top->eval(); if (tfp) tfp->dump(gtime++);
     for (int i = 0; i < 5; i++) {
         if (top->lsu_l1sm_req_vld || top->lsu_rf_wb_vld ||
-            top->lsu_sf_wbdone_vld || top->lsu_ws_stall_vld)
+            top->lsu_ws_wbdone_vld || top->lsu_ws_stall_vld)
             err("vld not 0 during reset");
         top->clk = 1; top->eval(); if (tfp) tfp->dump(gtime++);
         top->clk = 0; top->eval(); if (tfp) tfp->dump(gtime++);
@@ -147,25 +147,25 @@ static void run_test(Vlsu *top, VerilatedVcdC *tfp, const char *name)
         int offer = (txq_h < txq_t);
         const lsu_issue_t *tx = offer ? &txq[txq_h & 65535] : 0;
 
-        top->sf_lsu_issue_vld = offer;
+        top->ws_lsu_issue_vld = offer;
         if (offer) {
-            top->sf_lsu_issue_opcode = tx->opcode;
-            top->sf_lsu_issue_rd = tx->rd;
-            top->sf_lsu_issue_warp_id = tx->warp_id;
-            top->sf_lsu_issue_lane_mask = tx->lane_mask;
+            top->ws_lsu_issue_opcode = tx->opcode;
+            top->ws_lsu_issue_rd = tx->rd;
+            top->ws_lsu_issue_warp_id = tx->warp_id;
+            top->ws_lsu_issue_lane_mask = tx->lane_mask;
             for (int l = 0; l < NLANES; l++) {
-                top->sf_lsu_issue_opa[l] = tx->opa[l];
-                top->sf_lsu_issue_opb[l] = tx->opb[l];
+                top->ws_lsu_issue_opa[l] = tx->opa[l];
+                top->ws_lsu_issue_opb[l] = tx->opb[l];
             }
-            top->sf_lsu_issue_imm = tx->imm;
-            top->sf_lsu_issue_shbase = tx->shbase;
+            top->ws_lsu_issue_imm = tx->imm;
+            top->ws_lsu_issue_shbase = tx->shbase;
         }
         top->l1sm_lsu_rsp_vld = rsp_offer;
         if (rsp_offer)
             for (int l = 0; l < NLANES; l++) top->l1sm_lsu_rsp_rdata[l] = rsp_data[l];
         top->l1sm_lsu_req_rdy = dr_req;
         top->rf_lsu_wb_rdy = dr_wb;
-        top->sf_lsu_wbdone_rdy = dr_wd;
+        top->ws_lsu_wbdone_rdy = dr_wd;
         top->ws_lsu_stall_rdy = dr_st;
         top->eval();
 
@@ -200,10 +200,10 @@ static void run_test(Vlsu *top, VerilatedVcdC *tfp, const char *name)
                     }
         }
         if (p_wd_v && !p_wd_r) {
-            if (!top->lsu_sf_wbdone_vld)
+            if (!top->lsu_ws_wbdone_vld)
                 err("wbdone vld dropped under backpressure");
-            else if ((int)top->lsu_sf_wbdone_warp_id != p_wd_warp ||
-                     (int)top->lsu_sf_wbdone_rd != p_wd_rd)
+            else if ((int)top->lsu_ws_wbdone_warp_id != p_wd_warp ||
+                     (int)top->lsu_ws_wbdone_rd != p_wd_rd)
                 err("wbdone payload changed under backpressure");
         }
         if (p_st_v && !p_st_r) {
@@ -215,21 +215,21 @@ static void run_test(Vlsu *top, VerilatedVcdC *tfp, const char *name)
         }
 
         // -- 本拍末沿将发生的发射（输出为寄存器值或组合置位项，边沿前稳定） --
-        int d_acc = offer && top->lsu_sf_issue_rdy;
+        int d_acc = offer && top->lsu_ws_issue_rdy;
         int d_req = top->lsu_l1sm_req_vld && dr_req;
         int d_rsp = top->l1sm_lsu_rsp_vld && top->lsu_l1sm_rsp_rdy;
         int d_wb  = top->lsu_rf_wb_vld && dr_wb;
-        int d_wd  = top->lsu_sf_wbdone_vld && dr_wd;
+        int d_wd  = top->lsu_ws_wbdone_vld && dr_wd;
         int d_st  = top->lsu_ws_stall_vld && dr_st;
         if (d_req + d_wb + d_wd > 1)
             err("multiple state-decoded channels fire in one cycle");
-        if (top->lsu_sf_issue_rdy != !mirror_busy)
+        if (top->lsu_ws_issue_rdy != !mirror_busy)
             err("issue_rdy inconsistent with in-flight state");
 
         // -- 参考同拍推进（同激励、同背压；先置激励，后 lsu_step，再按 rdy 消费） --
-        if (offer && !ref.sf_lsu_issue.vld) {
-            ref.sf_lsu_issue.p = *tx;
-            ref.sf_lsu_issue.vld = 1;
+        if (offer && !ref.ws_lsu_issue.vld) {
+            ref.ws_lsu_issue.p = *tx;
+            ref.ws_lsu_issue.vld = 1;
         }
         if (rsp_offer && !ref.l1sm_lsu_rsp.vld) {
             for (int l = 0; l < NLANES; l++)
@@ -237,9 +237,9 @@ static void run_test(Vlsu *top, VerilatedVcdC *tfp, const char *name)
             ref.l1sm_lsu_rsp.vld = 1;
         }
         int had_rsp = ref.l1sm_lsu_rsp.vld;
-        int had_iss = ref.sf_lsu_issue.vld;
+        int had_iss = ref.ws_lsu_issue.vld;
         lsu_step(&ref);
-        int r_acc = had_iss && !ref.sf_lsu_issue.vld;
+        int r_acc = had_iss && !ref.ws_lsu_issue.vld;
         int r_rsp = had_rsp && !ref.l1sm_lsu_rsp.vld;
 
         // -- 参考输出按同拍 rdy 消费，载荷位精确比对 --
@@ -281,12 +281,12 @@ static void run_test(Vlsu *top, VerilatedVcdC *tfp, const char *name)
             r_wb = 1;
         }
         int r_wd = 0;
-        if (ref.lsu_sf_wbdone.vld && dr_wd) {
-            if ((int)top->lsu_sf_wbdone_warp_id != ref.lsu_sf_wbdone.p.warp_id)
+        if (ref.lsu_ws_wbdone.vld && dr_wd) {
+            if ((int)top->lsu_ws_wbdone_warp_id != ref.lsu_ws_wbdone.p.warp_id)
                 err("wbdone warp_id mismatch");
-            if ((int)top->lsu_sf_wbdone_rd != ref.lsu_sf_wbdone.p.rd)
+            if ((int)top->lsu_ws_wbdone_rd != ref.lsu_ws_wbdone.p.rd)
                 err("wbdone rd mismatch");
-            ref.lsu_sf_wbdone.vld = 0;
+            ref.lsu_ws_wbdone.vld = 0;
             r_wd = 1;
         }
         int r_st = 0;
@@ -336,9 +336,9 @@ static void run_test(Vlsu *top, VerilatedVcdC *tfp, const char *name)
         p_wb_rd = top->lsu_rf_wb_rd;
         p_wb_mask = top->lsu_rf_wb_lane_mask;
         for (int l = 0; l < NLANES; l++) p_wb_wdata[l] = top->lsu_rf_wb_wdata[l];
-        p_wd_v = top->lsu_sf_wbdone_vld; p_wd_r = dr_wd;
-        p_wd_warp = top->lsu_sf_wbdone_warp_id;
-        p_wd_rd = top->lsu_sf_wbdone_rd;
+        p_wd_v = top->lsu_ws_wbdone_vld; p_wd_r = dr_wd;
+        p_wd_warp = top->lsu_ws_wbdone_warp_id;
+        p_wd_rd = top->lsu_ws_wbdone_rd;
         p_st_v = top->lsu_ws_stall_vld; p_st_r = dr_st;
         p_st_warp = top->lsu_ws_stall_warp_id;
         p_st_reason = top->lsu_ws_stall_reason;
@@ -350,10 +350,10 @@ static void run_test(Vlsu *top, VerilatedVcdC *tfp, const char *name)
 
         if (txq_h == txq_t && !mirror_busy && !rsp_pend &&
             !top->lsu_l1sm_req_vld && !top->lsu_rf_wb_vld &&
-            !top->lsu_sf_wbdone_vld && !top->lsu_ws_stall_vld &&
-            !ref.sf_lsu_issue.vld && !ref.lsu_l1sm_req.vld &&
+            !top->lsu_ws_wbdone_vld && !top->lsu_ws_stall_vld &&
+            !ref.ws_lsu_issue.vld && !ref.lsu_l1sm_req.vld &&
             !ref.l1sm_lsu_rsp.vld && !ref.lsu_rf_wb.vld &&
-            !ref.lsu_sf_wbdone.vld && !ref.lsu_ws_stall.vld &&
+            !ref.lsu_ws_wbdone.vld && !ref.lsu_ws_stall.vld &&
             !ref.lsu.busy && !ref.lsu.stall_sent)
             finished = 1;
     }

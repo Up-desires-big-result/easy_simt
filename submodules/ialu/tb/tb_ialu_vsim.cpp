@@ -31,7 +31,7 @@ static uint32_t rnd32(void)
     return ((uint32_t)rnd() << 17) ^ ((uint32_t)rnd() << 6) ^ (uint32_t)rnd();
 }
 
-// ---------------- 激励队列（sf 侧发射序列，vld 保持至握手） ----------------
+// ---------------- 激励队列（ws 侧发射序列，vld 保持至握手） ----------------
 static ialu_issue_t txq[65536];
 static int txq_h, txq_t;
 static uint32_t pc_seq;
@@ -120,22 +120,22 @@ static int ref_cycle(int offer, const ialu_issue_t *op,
                      int r_br, int r_wb, int r_wd)
 {
     if (offer) {
-        ref.sf_ialu_issue.p = *op;
-        ref.sf_ialu_issue.vld = 1;
+        ref.ws_ialu_issue.p = *op;
+        ref.ws_ialu_issue.vld = 1;
     }
-    int had = ref.sf_ialu_issue.vld;
+    int had = ref.ws_ialu_issue.vld;
     ialu_step(&ref);
-    int acc = had && !ref.sf_ialu_issue.vld;
+    int acc = had && !ref.ws_ialu_issue.vld;
 
-    if (ref.ialu_sf_br.vld && r_br) {
+    if (ref.ialu_ws_br.vld && r_br) {
         EvT e; memset(&e, 0, sizeof e);
         e.type = T_BR;
-        e.warp = ref.ialu_sf_br.p.warp_id;
-        e.taken = ref.ialu_sf_br.p.taken;
-        e.target = ref.ialu_sf_br.p.target;
-        e.brt = ref.ialu_sf_br.p.brt_idx;
+        e.warp = ref.ialu_ws_br.p.warp_id;
+        e.taken = ref.ialu_ws_br.p.taken;
+        e.target = ref.ialu_ws_br.p.target;
+        e.brt = ref.ialu_ws_br.p.brt_idx;
         ref_push(&e);
-        ref.ialu_sf_br.vld = 0;
+        ref.ialu_ws_br.vld = 0;
     }
     if (ref.ialu_rf_wb.vld && r_wb) {
         EvT e; memset(&e, 0, sizeof e);
@@ -147,13 +147,13 @@ static int ref_cycle(int offer, const ialu_issue_t *op,
         ref_push(&e);
         ref.ialu_rf_wb.vld = 0;
     }
-    if (ref.ialu_sf_wbdone.vld && r_wd) {
+    if (ref.ialu_ws_wbdone.vld && r_wd) {
         EvT e; memset(&e, 0, sizeof e);
         e.type = T_WD;
-        e.warp = ref.ialu_sf_wbdone.p.warp_id;
-        e.rd = ref.ialu_sf_wbdone.p.rd;
+        e.warp = ref.ialu_ws_wbdone.p.warp_id;
+        e.rd = ref.ialu_ws_wbdone.p.rd;
         ref_push(&e);
-        ref.ialu_sf_wbdone.vld = 0;
+        ref.ialu_ws_wbdone.vld = 0;
     }
     return acc;
 }
@@ -178,24 +178,24 @@ static void run_test(Vialu *top, VerilatedVcdC *tfp, const char *name,
 
     // ---- 复位 ----
     top->rst_n = 0;
-    top->sf_ialu_issue_vld = 0;
-    top->sf_ialu_issue_opcode = 0;
-    top->sf_ialu_issue_rd = 0;
-    top->sf_ialu_issue_warp_id = 0;
-    top->sf_ialu_issue_lane_mask = 0;
-    top->sf_ialu_issue_pc = 0;
-    top->sf_ialu_issue_imm = 0;
+    top->ws_ialu_issue_vld = 0;
+    top->ws_ialu_issue_opcode = 0;
+    top->ws_ialu_issue_rd = 0;
+    top->ws_ialu_issue_warp_id = 0;
+    top->ws_ialu_issue_lane_mask = 0;
+    top->ws_ialu_issue_pc = 0;
+    top->ws_ialu_issue_imm = 0;
     for (int l = 0; l < NLANES; l++) {
-        top->sf_ialu_issue_opa[l] = 0;
-        top->sf_ialu_issue_opb[l] = 0;
-        top->sf_ialu_issue_opc[l] = 0;
+        top->ws_ialu_issue_opa[l] = 0;
+        top->ws_ialu_issue_opb[l] = 0;
+        top->ws_ialu_issue_opc[l] = 0;
     }
-    top->sf_ialu_br_rdy = 0;
+    top->ws_ialu_br_rdy = 0;
     top->rf_ialu_wb_rdy = 0;
-    top->sf_ialu_wbdone_rdy = 0;
+    top->ws_ialu_wbdone_rdy = 0;
     top->clk = 0; top->eval(); if (tfp) tfp->dump(gtime++);
     for (int i = 0; i < 5; i++) {
-        if (top->ialu_sf_br_vld || top->ialu_rf_wb_vld || top->ialu_sf_wbdone_vld)
+        if (top->ialu_ws_br_vld || top->ialu_rf_wb_vld || top->ialu_ws_wbdone_vld)
             err("vld not 0 during reset");
         top->clk = 1; top->eval(); if (tfp) tfp->dump(gtime++);
         top->clk = 0; top->eval(); if (tfp) tfp->dump(gtime++);
@@ -215,32 +215,32 @@ static void run_test(Vialu *top, VerilatedVcdC *tfp, const char *name,
         int offer = (txq_h < txq_t);
         const ialu_issue_t *tx = offer ? &txq[txq_h & 65535] : 0;
 
-        top->sf_ialu_issue_vld = offer;
+        top->ws_ialu_issue_vld = offer;
         if (offer) {
-            top->sf_ialu_issue_opcode = tx->opcode;
-            top->sf_ialu_issue_rd = tx->rd;
-            top->sf_ialu_issue_warp_id = tx->warp_id;
-            top->sf_ialu_issue_lane_mask = tx->lane_mask;
-            top->sf_ialu_issue_pc = tx->pc;
-            top->sf_ialu_issue_imm = tx->imm;
+            top->ws_ialu_issue_opcode = tx->opcode;
+            top->ws_ialu_issue_rd = tx->rd;
+            top->ws_ialu_issue_warp_id = tx->warp_id;
+            top->ws_ialu_issue_lane_mask = tx->lane_mask;
+            top->ws_ialu_issue_pc = tx->pc;
+            top->ws_ialu_issue_imm = tx->imm;
             for (int l = 0; l < NLANES; l++) {
-                top->sf_ialu_issue_opa[l] = tx->opa[l];
-                top->sf_ialu_issue_opb[l] = tx->opb[l];
-                top->sf_ialu_issue_opc[l] = tx->opc[l];
+                top->ws_ialu_issue_opa[l] = tx->opa[l];
+                top->ws_ialu_issue_opb[l] = tx->opb[l];
+                top->ws_ialu_issue_opc[l] = tx->opc[l];
             }
         }
-        top->sf_ialu_br_rdy = r_br;
+        top->ws_ialu_br_rdy = r_br;
         top->rf_ialu_wb_rdy = r_wb;
-        top->sf_ialu_wbdone_rdy = r_wd;
+        top->ws_ialu_wbdone_rdy = r_wd;
         top->eval();
 
         // -- 协议保持检查：上一拍 vld && !rdy，则本拍 vld 不撤、载荷不变 --
         if (p_br_v && !p_br_rdy) {
-            if (!top->ialu_sf_br_vld)
+            if (!top->ialu_ws_br_vld)
                 err("br vld dropped under backpressure");
-            else if ((int)top->ialu_sf_br_warp_id != p_br_warp ||
-                     top->ialu_sf_br_taken != p_br_taken ||
-                     top->ialu_sf_br_target != p_br_target)
+            else if ((int)top->ialu_ws_br_warp_id != p_br_warp ||
+                     top->ialu_ws_br_taken != p_br_taken ||
+                     top->ialu_ws_br_target != p_br_target)
                 err("br payload changed under backpressure");
         }
         if (p_wb_v && !p_wb_rdy) {
@@ -258,21 +258,21 @@ static void run_test(Vialu *top, VerilatedVcdC *tfp, const char *name,
                     }
         }
         if (p_wd_v && !p_wd_rdy) {
-            if (!top->ialu_sf_wbdone_vld)
+            if (!top->ialu_ws_wbdone_vld)
                 err("wbdone vld dropped under backpressure");
-            else if ((int)top->ialu_sf_wbdone_warp_id != p_wd_warp ||
-                     (int)top->ialu_sf_wbdone_rd != p_wd_rd)
+            else if ((int)top->ialu_ws_wbdone_warp_id != p_wd_warp ||
+                     (int)top->ialu_ws_wbdone_rd != p_wd_rd)
                 err("wbdone payload changed under backpressure");
         }
 
         // -- 本拍末沿将发生的发射（输出为寄存器值，边沿前稳定） --
-        int d_acc = offer && top->ialu_sf_issue_rdy;
-        int d_br = top->ialu_sf_br_vld && r_br;
+        int d_acc = offer && top->ialu_ws_issue_rdy;
+        int d_br = top->ialu_ws_br_vld && r_br;
         int d_wb = top->ialu_rf_wb_vld && r_wb;
-        int d_wd = top->ialu_sf_wbdone_vld && r_wd;
+        int d_wd = top->ialu_ws_wbdone_vld && r_wd;
         if (d_br + d_wb + d_wd > 1)
             err("multiple output channels fire in one cycle");
-        if (top->ialu_sf_issue_rdy != !mirror_busy)
+        if (top->ialu_ws_issue_rdy != !mirror_busy)
             err("issue_rdy inconsistent with in-flight state");
 
         // -- 参考同拍推进（同激励、同背压） --
@@ -286,8 +286,8 @@ static void run_test(Vialu *top, VerilatedVcdC *tfp, const char *name,
             txq_h++;
         }
         if (d_br) {
-            dut_fire_br(top->ialu_sf_br_warp_id, top->ialu_sf_br_taken,
-                        top->ialu_sf_br_target, top->ialu_sf_br_brt_idx);
+            dut_fire_br(top->ialu_ws_br_warp_id, top->ialu_ws_br_taken,
+                        top->ialu_ws_br_target, top->ialu_ws_br_brt_idx);
             if (cur_op != OP_BR) err("br fire while in-flight op is not BR");
             mirror_busy = 0; cur_op = -1;
         }
@@ -298,24 +298,24 @@ static void run_test(Vialu *top, VerilatedVcdC *tfp, const char *name,
                 err("wb fire from non-wb opcode");
         }
         if (d_wd) {
-            dut_fire_wd(top->ialu_sf_wbdone_warp_id, top->ialu_sf_wbdone_rd);
+            dut_fire_wd(top->ialu_ws_wbdone_warp_id, top->ialu_ws_wbdone_rd);
             if (cur_op == OP_BR) err("wbdone fire from BR");
             mirror_busy = 0; cur_op = -1;
         }
 
         // -- 影子更新 --
-        p_br_v = top->ialu_sf_br_vld; p_br_rdy = r_br;
-        p_br_warp = top->ialu_sf_br_warp_id;
-        p_br_taken = top->ialu_sf_br_taken;
-        p_br_target = top->ialu_sf_br_target;
+        p_br_v = top->ialu_ws_br_vld; p_br_rdy = r_br;
+        p_br_warp = top->ialu_ws_br_warp_id;
+        p_br_taken = top->ialu_ws_br_taken;
+        p_br_target = top->ialu_ws_br_target;
         p_wb_v = top->ialu_rf_wb_vld; p_wb_rdy = r_wb;
         p_wb_warp = top->ialu_rf_wb_warp_id;
         p_wb_rd = top->ialu_rf_wb_rd;
         p_wb_mask = top->ialu_rf_wb_lane_mask;
         for (int l = 0; l < NLANES; l++) p_wb_wdata[l] = top->ialu_rf_wb_wdata[l];
-        p_wd_v = top->ialu_sf_wbdone_vld; p_wd_rdy = r_wd;
-        p_wd_warp = top->ialu_sf_wbdone_warp_id;
-        p_wd_rd = top->ialu_sf_wbdone_rd;
+        p_wd_v = top->ialu_ws_wbdone_vld; p_wd_rdy = r_wd;
+        p_wd_warp = top->ialu_ws_wbdone_warp_id;
+        p_wd_rd = top->ialu_ws_wbdone_rd;
 
         // -- 时钟上升沿 --
         top->clk = 1; top->eval(); if (tfp) tfp->dump(gtime++);
@@ -323,10 +323,10 @@ static void run_test(Vialu *top, VerilatedVcdC *tfp, const char *name,
         cyc++;
 
         if (txq_h == txq_t && q_h == q_t && !mirror_busy &&
-            !top->ialu_sf_br_vld && !top->ialu_rf_wb_vld &&
-            !top->ialu_sf_wbdone_vld &&
-            !ref.ialu_sf_br.vld && !ref.ialu_rf_wb.vld &&
-            !ref.ialu_sf_wbdone.vld && !ref.ialu.has_issue)
+            !top->ialu_ws_br_vld && !top->ialu_rf_wb_vld &&
+            !top->ialu_ws_wbdone_vld &&
+            !ref.ialu_ws_br.vld && !ref.ialu_rf_wb.vld &&
+            !ref.ialu_ws_wbdone.vld && !ref.ialu.has_issue)
             finished = 1;
     }
 

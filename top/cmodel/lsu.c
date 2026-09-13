@@ -5,7 +5,7 @@
  * 共享再叠 SHBASE）、active mask 门控、8-lane 锁步一拍发出一个 8-lane
  * 请求、请求分 shmem/global 两路、装载数据引导写回、向 ws 报停顿。
  *
- * sf 侧载荷约定：
+ * ws 侧载荷约定：
  *   LDG: opa=逐 lane 偏移，imm=均匀基址（约束 C2）；
  *   STG: opa=逐 lane 数据，opb=逐 lane 偏移，imm=均匀基址；
  *   LDS: opa=逐 lane 偏移；  STS: opa=数据，opb=偏移。
@@ -65,12 +65,12 @@ int lsu_step(sim_t *s)
         break;
     case 5:    /* wbdone 待发射 */
         if (!u->req_sent) {
-            if (!s->lsu_sf_wbdone.vld) {
-                s->lsu_sf_wbdone.p = u->wbd;
-                s->lsu_sf_wbdone.vld = 1;
+            if (!s->lsu_ws_wbdone.vld) {
+                s->lsu_ws_wbdone.p = u->wbd;
+                s->lsu_ws_wbdone.vld = 1;
                 u->req_sent = 1;
             }
-        } else if (!s->lsu_sf_wbdone.vld) {
+        } else if (!s->lsu_ws_wbdone.vld) {
             u->req_sent = 0;
             u->req_stage = 0;
             u->busy = 0;
@@ -93,9 +93,9 @@ int lsu_step(sim_t *s)
     }
 
     /* ---- 输入：接收发射 ---- */
-    if (!u->busy && u->req_stage == 0 && s->sf_lsu_issue.vld) {
-        lsu_issue_t is = s->sf_lsu_issue.p;
-        s->sf_lsu_issue.vld = 0;
+    if (!u->busy && u->req_stage == 0 && s->ws_lsu_issue.vld) {
+        lsu_issue_t is = s->ws_lsu_issue.p;
+        s->ws_lsu_issue.vld = 0;
         s->st.fires++;
         fired++;
 

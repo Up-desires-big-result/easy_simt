@@ -22,9 +22,8 @@ void sim_init(sim_t *s)
     s->memif.in_base = 0x00100000;
     s->memif.out_base = 0x00200000;
     s->memif.memlat = 20;
-    s->sf.fetch_warp = -1;
-    s->sf.rd_warp = -1;
-    s->ws.grant_warp = -1;
+    s->ws.fetch_warp = -1;
+    s->ws.rd_warp = -1;
 }
 
 /* 程序镜像：每行一条 32 位指令（16 进制） */
@@ -114,15 +113,14 @@ void sim_block_start(sim_t *s)
 /* 全系统挂起检测：任一通道有未消费事务、任一模块有在途状态即为活 */
 static int sim_pending(sim_t *s)
 {
-    if (s->bs_sf_launch.vld || s->bs_ws_launch.vld || s->ws_bs_bdone.vld ||
-        s->ws_sf_grant.vld || s->sf_ws_stall.vld || s->sf_ws_bar.vld ||
-        s->lsu_ws_stall.vld || s->sf_icache_req.vld ||
-        s->icache_sf_rsp.vld || s->sf_rf_rd.vld || s->rf_sf_rddata.vld ||
-        s->sf_ialu_issue.vld || s->sf_falu_issue.vld ||
-        s->sf_lsu_issue.vld || s->ialu_sf_br.vld ||
+    if (s->bs_ws_launch.vld || s->ws_bs_bdone.vld ||
+        s->lsu_ws_stall.vld || s->ws_icache_req.vld ||
+        s->icache_ws_rsp.vld || s->ws_rf_rd.vld || s->rf_ws_rddata.vld ||
+        s->ws_ialu_issue.vld || s->ws_falu_issue.vld ||
+        s->ws_lsu_issue.vld || s->ialu_ws_br.vld ||
         s->ialu_rf_wb.vld || s->falu_rf_wb.vld || s->lsu_rf_wb.vld ||
-        s->ialu_sf_wbdone.vld || s->falu_sf_wbdone.vld ||
-        s->lsu_sf_wbdone.vld || s->lsu_l1sm_req.vld ||
+        s->ialu_ws_wbdone.vld || s->falu_ws_wbdone.vld ||
+        s->lsu_ws_wbdone.vld || s->lsu_l1sm_req.vld ||
         s->l1sm_lsu_rsp.vld || s->icache_memif_req.vld ||
         s->memif_icache_rsp.vld || s->l1sm_memif_req.vld ||
         s->memif_l1sm_rsp.vld)
@@ -131,19 +129,17 @@ static int sim_pending(sim_t *s)
         s->l1sm.busy || s->lsu.busy || s->ialu.has_issue ||
         s->falu.has_issue)
         return 1;
-    if (s->sf.fetch_warp >= 0 || s->sf.fetch_pend || s->sf.rd_warp >= 0)
+    if (s->ws.fetch_warp >= 0 || s->ws.fetch_pend || s->ws.rd_warp >= 0)
         return 1;
-    if (s->ws.bar_count > 0 || s->ws.grant_warp >= 0 || s->ws.bdone_sent)
+    if (s->ws.bar_count > 0 || s->ws.bdone_sent)
         return 1;
     if (s->lsu.stall_sent)
         return 1;
     for (int w = 0; w < NWARPS; w++) {
-        int st = s->sf.w[w].state;
+        int st = s->ws.w[w].state;
         if (st != WS_IDLE && st != WS_DONE && st != WS_BAR)
             return 1;
-        if (s->sf.des_reason[w] != s->sf.cur_reason[w])
-            return 1;
-        if (s->sf.bar_pending[w])
+        if (s->ws.bar_pending[w])
             return 1;
     }
     return 0;
@@ -157,7 +153,6 @@ int sim_run(sim_t *s)
         int fired = 0;
         fired += bs_step(s);
         fired += ws_step(s);
-        fired += sf_step(s);
         fired += rf_step(s);
         fired += ialu_step(s);
         fired += falu_step(s);

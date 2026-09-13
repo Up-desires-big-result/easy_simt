@@ -32,7 +32,7 @@ static uint32_t rnd32(void)
     return ((uint32_t)rnd() << 17) ^ ((uint32_t)rnd() << 6) ^ (uint32_t)rnd();
 }
 
-// ---------------- 激励队列（sf 侧发射序列，vld 保持至握手） ----------------
+// ---------------- 激励队列（ws 侧发射序列，vld 保持至握手） ----------------
 static falu_issue_t txq[65536];
 static int txq_h, txq_t;
 static void tx_push(const falu_issue_t *t) { txq[txq_t++ & 65535] = *t; }
@@ -106,12 +106,12 @@ static void dut_fire_wd(int warp, int rd)
 static int ref_cycle(int offer, const falu_issue_t *op, int r_wb, int r_wd)
 {
     if (offer) {
-        ref.sf_falu_issue.p = *op;
-        ref.sf_falu_issue.vld = 1;
+        ref.ws_falu_issue.p = *op;
+        ref.ws_falu_issue.vld = 1;
     }
-    int had = ref.sf_falu_issue.vld;
+    int had = ref.ws_falu_issue.vld;
     falu_step(&ref);
-    int acc = had && !ref.sf_falu_issue.vld;
+    int acc = had && !ref.ws_falu_issue.vld;
 
     if (ref.falu_rf_wb.vld && r_wb) {
         EvT e; memset(&e, 0, sizeof e);
@@ -123,13 +123,13 @@ static int ref_cycle(int offer, const falu_issue_t *op, int r_wb, int r_wd)
         ref_push(&e);
         ref.falu_rf_wb.vld = 0;
     }
-    if (ref.falu_sf_wbdone.vld && r_wd) {
+    if (ref.falu_ws_wbdone.vld && r_wd) {
         EvT e; memset(&e, 0, sizeof e);
         e.type = T_WD;
-        e.warp = ref.falu_sf_wbdone.p.warp_id;
-        e.rd = ref.falu_sf_wbdone.p.rd;
+        e.warp = ref.falu_ws_wbdone.p.warp_id;
+        e.rd = ref.falu_ws_wbdone.p.rd;
         ref_push(&e);
-        ref.falu_sf_wbdone.vld = 0;
+        ref.falu_ws_wbdone.vld = 0;
     }
     return acc;
 }
@@ -152,20 +152,20 @@ static void run_test(Vfalu *top, VerilatedVcdC *tfp, const char *name,
 
     // ---- 复位 ----
     top->rst_n = 0;
-    top->sf_falu_issue_vld = 0;
-    top->sf_falu_issue_opcode = 0;
-    top->sf_falu_issue_rd = 0;
-    top->sf_falu_issue_warp_id = 0;
-    top->sf_falu_issue_lane_mask = 0;
+    top->ws_falu_issue_vld = 0;
+    top->ws_falu_issue_opcode = 0;
+    top->ws_falu_issue_rd = 0;
+    top->ws_falu_issue_warp_id = 0;
+    top->ws_falu_issue_lane_mask = 0;
     for (int l = 0; l < NLANES; l++) {
-        top->sf_falu_issue_opa[l] = 0;
-        top->sf_falu_issue_opb[l] = 0;
+        top->ws_falu_issue_opa[l] = 0;
+        top->ws_falu_issue_opb[l] = 0;
     }
     top->rf_falu_wb_rdy = 0;
-    top->sf_falu_wbdone_rdy = 0;
+    top->ws_falu_wbdone_rdy = 0;
     top->clk = 0; top->eval(); if (tfp) tfp->dump(gtime++);
     for (int i = 0; i < 5; i++) {
-        if (top->falu_rf_wb_vld || top->falu_sf_wbdone_vld)
+        if (top->falu_rf_wb_vld || top->falu_ws_wbdone_vld)
             err("vld not 0 during reset");
         top->clk = 1; top->eval(); if (tfp) tfp->dump(gtime++);
         top->clk = 0; top->eval(); if (tfp) tfp->dump(gtime++);
@@ -184,19 +184,19 @@ static void run_test(Vfalu *top, VerilatedVcdC *tfp, const char *name,
         int offer = (txq_h < txq_t);
         const falu_issue_t *tx = offer ? &txq[txq_h & 65535] : 0;
 
-        top->sf_falu_issue_vld = offer;
+        top->ws_falu_issue_vld = offer;
         if (offer) {
-            top->sf_falu_issue_opcode = tx->opcode;
-            top->sf_falu_issue_rd = tx->rd;
-            top->sf_falu_issue_warp_id = tx->warp_id;
-            top->sf_falu_issue_lane_mask = tx->lane_mask;
+            top->ws_falu_issue_opcode = tx->opcode;
+            top->ws_falu_issue_rd = tx->rd;
+            top->ws_falu_issue_warp_id = tx->warp_id;
+            top->ws_falu_issue_lane_mask = tx->lane_mask;
             for (int l = 0; l < NLANES; l++) {
-                top->sf_falu_issue_opa[l] = tx->opa[l];
-                top->sf_falu_issue_opb[l] = tx->opb[l];
+                top->ws_falu_issue_opa[l] = tx->opa[l];
+                top->ws_falu_issue_opb[l] = tx->opb[l];
             }
         }
         top->rf_falu_wb_rdy = r_wb;
-        top->sf_falu_wbdone_rdy = r_wd;
+        top->ws_falu_wbdone_rdy = r_wd;
         top->eval();
 
         // -- 协议保持检查：上一拍 vld && !rdy，则本拍 vld 不撤、载荷不变 --
@@ -215,20 +215,20 @@ static void run_test(Vfalu *top, VerilatedVcdC *tfp, const char *name,
                     }
         }
         if (p_wd_v && !p_wd_rdy) {
-            if (!top->falu_sf_wbdone_vld)
+            if (!top->falu_ws_wbdone_vld)
                 err("wbdone vld dropped under backpressure");
-            else if ((int)top->falu_sf_wbdone_warp_id != p_wd_warp ||
-                     (int)top->falu_sf_wbdone_rd != p_wd_rd)
+            else if ((int)top->falu_ws_wbdone_warp_id != p_wd_warp ||
+                     (int)top->falu_ws_wbdone_rd != p_wd_rd)
                 err("wbdone payload changed under backpressure");
         }
 
         // -- 本拍末沿将发生的发射（输出为寄存器值，边沿前稳定） --
-        int d_acc = offer && top->falu_sf_issue_rdy;
+        int d_acc = offer && top->falu_ws_issue_rdy;
         int d_wb = top->falu_rf_wb_vld && r_wb;
-        int d_wd = top->falu_sf_wbdone_vld && r_wd;
+        int d_wd = top->falu_ws_wbdone_vld && r_wd;
         if (d_wb + d_wd > 1)
             err("multiple output channels fire in one cycle");
-        if (top->falu_sf_issue_rdy != !mirror_busy)
+        if (top->falu_ws_issue_rdy != !mirror_busy)
             err("issue_rdy inconsistent with in-flight state");
 
         // -- 参考同拍推进（同激励、同背压） --
@@ -247,7 +247,7 @@ static void run_test(Vfalu *top, VerilatedVcdC *tfp, const char *name,
             if (!mirror_busy) err("wb fire without in-flight op");
         }
         if (d_wd) {
-            dut_fire_wd(top->falu_sf_wbdone_warp_id, top->falu_sf_wbdone_rd);
+            dut_fire_wd(top->falu_ws_wbdone_warp_id, top->falu_ws_wbdone_rd);
             if (cur_op != OP_FMUL && cur_op != OP_FADD && cur_op != OP_FNEG)
                 err("wbdone fire from unexpected opcode");
             mirror_busy = 0; cur_op = -1;
@@ -259,9 +259,9 @@ static void run_test(Vfalu *top, VerilatedVcdC *tfp, const char *name,
         p_wb_rd = top->falu_rf_wb_rd;
         p_wb_mask = top->falu_rf_wb_lane_mask;
         for (int l = 0; l < NLANES; l++) p_wb_wdata[l] = top->falu_rf_wb_wdata[l];
-        p_wd_v = top->falu_sf_wbdone_vld; p_wd_rdy = r_wd;
-        p_wd_warp = top->falu_sf_wbdone_warp_id;
-        p_wd_rd = top->falu_sf_wbdone_rd;
+        p_wd_v = top->falu_ws_wbdone_vld; p_wd_rdy = r_wd;
+        p_wd_warp = top->falu_ws_wbdone_warp_id;
+        p_wd_rd = top->falu_ws_wbdone_rd;
 
         // -- 时钟上升沿 --
         top->clk = 1; top->eval(); if (tfp) tfp->dump(gtime++);
@@ -269,8 +269,8 @@ static void run_test(Vfalu *top, VerilatedVcdC *tfp, const char *name,
         cyc++;
 
         if (txq_h == txq_t && q_h == q_t && !mirror_busy &&
-            !top->falu_rf_wb_vld && !top->falu_sf_wbdone_vld &&
-            !ref.falu_rf_wb.vld && !ref.falu_sf_wbdone.vld &&
+            !top->falu_rf_wb_vld && !top->falu_ws_wbdone_vld &&
+            !ref.falu_rf_wb.vld && !ref.falu_ws_wbdone.vld &&
             !ref.falu.has_issue)
             finished = 1;
     }

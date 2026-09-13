@@ -12,16 +12,16 @@
  *   - 全部状态收进 sim_t 上下文，无全局变量（为将来 DPI 接入预留）。
  *
  * 模型约束（已知与规范的偏差，均在此声明）：
- *   C1. intf_spec §2 的 sf_lsu_issue 载荷未含第二个逐 lane 操作数，
+ *   C1. intf_spec §2 的 ws_lsu_issue 载荷未含第二个逐 lane 操作数，
  *       存储类指令需要"每 lane 数据 + 每 lane 偏移"两个向量，本模型
  *       增设 opb 字段，intf_spec 需补勘误。
  *   C2. LDG/STG 的 ra（基址）须为活动 lane 间同值（黄金程序由 LDP
- *       广播保证）；sf 校验该约束，违反置错误标志。这是单 kernel
+ *       广播保证）；ws 校验该约束，违反置错误标志。这是单 kernel
  *       原型机的已知限制。
- *   C3. LDP/CSRR 经 ialu 直通路径写回（sf 将参数/特殊寄存器值广播进
+ *   C3. LDP/CSRR 经 ialu 直通路径写回（ws 将参数/特殊寄存器值广播进
  *       opa，ialu 原样产出 wdata），以保持 rf 写口三源结构不变。
- *   C4. JOIN 由 sf 本地处置（仅涉及分化栈，无 ialu 决议需求）。
- *   C5. IMAD 为 R3 型需三个逐 lane 源，sf_ialu_issue 增设 opc 向量，
+ *   C4. JOIN 由 ws 本地处置（仅涉及分化栈，无 ialu 决议需求）。
+ *   C5. IMAD 为 R3 型需三个逐 lane 源，ws_ialu_issue 增设 opc 向量，
  *       intf_spec 需补勘误。
  * ========================================================================== */
 #ifndef SIM_COMMON_H
@@ -77,43 +77,39 @@ enum {
 typedef uint32_t lanev_t[NLANES];   /* 8×32b 逐 lane 数据 */
 
 /* ---------------- 通道事务载荷（与 intf_spec 端口表一一对应） ---------------- */
-/* bs_sf_launch / bs_ws_launch */
+/* bs_ws_launch */
 typedef struct { uint32_t block_idx, n, shbase; } launch_t;
-/* ws_sf_grant */
-typedef struct { int warp_id; } grant_t;
-/* sf_ws_stall / lsu_ws_stall */
+/* lsu_ws_stall */
 typedef struct { int warp_id, reason; } stall_t;
-/* sf_ws_bar */
-typedef struct { int warp_id; uint32_t block_id; } bar_t;
-/* sf_icache_req */
+/* ws_icache_req */
 typedef struct { uint32_t pc; } fetch_req_t;
-/* icache_sf_rsp */
+/* icache_ws_rsp */
 typedef struct { uint32_t inst; } fetch_rsp_t;
-/* sf_rf_rd */
+/* ws_rf_rd */
 typedef struct { int warp_id, rs1, rs2; } rf_rd_t;
-/* rf_sf_rddata */
+/* rf_ws_rddata */
 typedef struct { lanev_t a, b; } rf_rddata_t;
-/* sf_ialu_issue */
+/* ws_ialu_issue */
 typedef struct {
     int opcode, rd, warp_id;
     uint8_t lane_mask;
     uint32_t pc, imm;
     lanev_t opa, opb, opc;      /* opc：R3 型（IMAD）第三源，见偏差 C5 */
 } ialu_issue_t;
-/* sf_falu_issue */
+/* ws_falu_issue */
 typedef struct {
     int opcode, rd, warp_id;
     uint8_t lane_mask;
     lanev_t opa, opb;
 } falu_issue_t;
-/* sf_lsu_issue（含 C1 声明的 opb 扩展） */
+/* ws_lsu_issue（含 C1 声明的 opb 扩展） */
 typedef struct {
     int opcode, rd, warp_id;
     uint8_t lane_mask;
     uint32_t imm, shbase;
     lanev_t opa, opb;
 } lsu_issue_t;
-/* ialu_sf_br */
+/* ialu_ws_br */
 typedef struct {
     int warp_id;
     uint8_t taken;
@@ -125,7 +121,7 @@ typedef struct {
     uint8_t lane_mask;
     lanev_t wdata;
 } wb_t;
-/* {ialu,falu,lsu}_sf_wbdone */
+/* {ialu,falu,lsu}_ws_wbdone */
 typedef struct { int warp_id, rd; } wbdone_t;
 /* lsu_l1sm_req */
 typedef struct {
@@ -149,9 +145,7 @@ typedef struct { uint32_t block_idx; } bdone_t;
 /* ---------------- 深度 1 的 vld/rdy 通道 ---------------- */
 typedef struct { int vld; launch_t p; }      chan_launch_t;
 typedef struct { int vld; bdone_t p; }       chan_bdone_t;
-typedef struct { int vld; grant_t p; }       chan_grant_t;
 typedef struct { int vld; stall_t p; }       chan_stall_t;
-typedef struct { int vld; bar_t p; }         chan_bar_t;
 typedef struct { int vld; fetch_req_t p; }   chan_fetch_req_t;
 typedef struct { int vld; fetch_rsp_t p; }   chan_fetch_rsp_t;
 typedef struct { int vld; rf_rd_t p; }       chan_rf_rd_t;
@@ -194,21 +188,7 @@ typedef struct {
     uint32_t block_idx;
 } bs_t;
 
-/* ws */
-typedef struct {
-    int launched;               /* 本块已收 launch */
-    uint32_t block_id;
-    int sf_reason[NWARPS];      /* 来自 sf 的停顿原因锁存 */
-    int lsu_reason[NWARPS];     /* 来自 lsu 的停顿原因锁存 */
-    int barrier[NWARPS];        /* 到达屏障 */
-    int bar_count;
-    int done[NWARPS];
-    int ptr;                    /* 2 位轮转指针 */
-    int grant_warp;             /* 待命授予的 warp（-1 无） */
-    int bdone_sent;             /* block_done 已置位待消费 */
-} ws_t;
-
-/* sf 每 warp 状态 */
+/* ws 每 warp 状态 */
 enum {
     WS_IDLE = 0, WS_FETCH, WS_HAZ, WS_RD1, WS_RD2, WS_ISSUE,
     WS_EXEC, WS_BR, WS_BAR, WS_DONE
@@ -225,22 +205,31 @@ typedef struct {
     lanev_t rd_data_a, rd_data_b; /* 第一阶段读口数据暂存 */
     lanev_t rd_data_c;          /* 第二阶段读回（存储数据等） */
     int rd_phase;               /* 0 无需/未始 1/-1 第一阶段 2/-2 第二阶段 */
-} sf_warp_t;
+} ws_warp_t;
 
+/* ws — Warp Scheduler（SIMT 前端与 warp 调度合一） */
 typedef struct {
-    int active;                 /* 已收 launch */
+    /* 前端侧 */
+    int active;                 /* 已收 launch（前端侧占用） */
     uint32_t block_idx, n, shbase;
-    sf_warp_t w[NWARPS];
+    ws_warp_t w[NWARPS];
     uint32_t sb_busy[NWARPS];   /* 记分板：每 warp 32 寄存器忙位 */
     int lsu_out[NWARPS];        /* 该 warp 在 lsu 的未退休访存计数 */
     int fetch_warp;             /* 在途取指 warp（-1 无） */
     int fetch_pend;             /* 取指请求待置位 */
     int rd_warp;                /* 在途 rf 读 warp（-1 无） */
-    int des_reason[NWARPS];     /* 期望上报的停顿原因 */
-    int cur_reason[NWARPS];     /* 已上报的停顿原因 */
-    int bar_pending[NWARPS];    /* 屏障到达消息待发送 */
-    int err;                    /* sf_top_err 锁存 */
-} sf_t;
+    int des_reason[NWARPS];     /* 停顿原因（调度直接读取） */
+    int bar_pending[NWARPS];    /* 屏障到达待处理（等 LSU 排空） */
+    int err;                    /* ws_top_err 锁存 */
+    /* 调度侧 */
+    int launched;               /* 本块已收 launch（调度侧占用） */
+    int lsu_reason[NWARPS];     /* 来自 lsu 的停顿原因锁存 */
+    int barrier[NWARPS];        /* 到达屏障 */
+    int bar_count;
+    int done[NWARPS];
+    int ptr;                    /* 2 位轮转指针 */
+    int bdone_sent;             /* block_done 已置位待消费 */
+} ws_t;
 
 /* rf */
 typedef struct {
@@ -341,27 +330,23 @@ struct sim_s {
     int brt_valid[IMEM_WORDS];
 
     /* 通道（源_宿 命名） */
-    chan_launch_t     bs_sf_launch;
     chan_launch_t     bs_ws_launch;
     chan_bdone_t      ws_bs_bdone;
-    chan_grant_t      ws_sf_grant;
-    chan_stall_t      sf_ws_stall;
-    chan_bar_t        sf_ws_bar;
     chan_stall_t      lsu_ws_stall;
-    chan_fetch_req_t  sf_icache_req;
-    chan_fetch_rsp_t  icache_sf_rsp;
-    chan_rf_rd_t      sf_rf_rd;
-    chan_rf_rddata_t  rf_sf_rddata;
-    chan_ialu_issue_t sf_ialu_issue;
-    chan_falu_issue_t sf_falu_issue;
-    chan_lsu_issue_t  sf_lsu_issue;
-    chan_br_t         ialu_sf_br;
+    chan_fetch_req_t  ws_icache_req;
+    chan_fetch_rsp_t  icache_ws_rsp;
+    chan_rf_rd_t      ws_rf_rd;
+    chan_rf_rddata_t  rf_ws_rddata;
+    chan_ialu_issue_t ws_ialu_issue;
+    chan_falu_issue_t ws_falu_issue;
+    chan_lsu_issue_t  ws_lsu_issue;
+    chan_br_t         ialu_ws_br;
     chan_wb_t         ialu_rf_wb;
     chan_wb_t         falu_rf_wb;
     chan_wb_t         lsu_rf_wb;
-    chan_wbdone_t     ialu_sf_wbdone;
-    chan_wbdone_t     falu_sf_wbdone;
-    chan_wbdone_t     lsu_sf_wbdone;
+    chan_wbdone_t     ialu_ws_wbdone;
+    chan_wbdone_t     falu_ws_wbdone;
+    chan_wbdone_t     lsu_ws_wbdone;
     chan_l1sm_req_t   lsu_l1sm_req;
     chan_l1sm_rsp_t   l1sm_lsu_rsp;
     chan_memif_ireq_t icache_memif_req;
@@ -370,7 +355,7 @@ struct sim_s {
     chan_memif_drsp_t memif_l1sm_rsp;
 
     /* 模块状态 */
-    bs_t bs; ws_t ws; sf_t sf; rf_t rf;
+    bs_t bs; ws_t ws; rf_t rf;
     ialu_t ialu; falu_t falu; lsu_t lsu;
     icache_t icache; l1sm_t l1sm; memif_t memif;
 
@@ -391,7 +376,6 @@ int  sim_run(sim_t *s);
 
 int bs_step(sim_t *s);
 int ws_step(sim_t *s);
-int sf_step(sim_t *s);
 int rf_step(sim_t *s);
 int ialu_step(sim_t *s);
 int falu_step(sim_t *s);

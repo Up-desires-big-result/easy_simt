@@ -12,15 +12,15 @@
 
 ### 1.1 模块定位与职责
 
-memif 是片外唯一通道（ma_spec §10），职责：
+memif 是片外唯一通道（ma_spec §9），职责：
 
 - 仲裁 icache 与 l1sm 的回填/写通请求：**固定优先级（icache 优先）**，**单请求在途**；
-- 对外为 AXI4 主设备（全五通道 AW/W/B/AR/R，信号级见 intf_spec §10）；
+- 对外为 AXI4 主设备（全五通道 AW/W/B/AR/R，信号级见 intf_spec §9）；
 - 读（回填）：单拍整行（`arlen=0`、`arsize=3'b101` 32B/拍）；
 - 写（写通）：4B 窄传（`awlen=0`、`awsize=3'b010`），`wdata` 按 `awaddr[4:2]` 定位、`wstrb` 置对应 4 字节，等 BRESP 返回才算完成；
 - 错误检测：`rresp/bresp` 非 OKAY 置 `memif_top_err` 并保持（§5.4）。
 
-边界：本模块不含片外存储与固定延迟——片外存储为 tb 侧 AXI 从设备的行为级后备，片外固定延迟 `MEM_LAT`（默认 20，与 ISS 基线同参）由 tb 的 AXI 从设备建模，本模块自身不加延迟（intf_spec §10）；本模块不含 tag 比较、阵列/bank（icache/l1sm 职责）。请求队列留参数位，v1 不实现（ma_spec §10）。
+边界：本模块不含片外存储与固定延迟——片外存储为 tb 侧 AXI 从设备的行为级后备，片外固定延迟 `MEM_LAT`（默认 20，与 ISS 基线同参）由 tb 的 AXI 从设备建模，本模块自身不加延迟（intf_spec §9）；本模块不含 tag 比较、阵列/bank（icache/l1sm 职责）。请求队列留参数位，v1 不实现（ma_spec §9）。
 
 ### 1.2 通道与事务路径
 
@@ -40,7 +40,7 @@ memif 是片外唯一通道（ma_spec §10），职责：
 - 指令段 `[0, 4×IMEM_WORDS)`：按字索引 `imem[addr>>2]`，超出程序长度 `imem_n` 的字返回 0（C 模型 `imem[w0+i] < imem_n` 口径）；
 - 全局输入段 `[in_base, in_base+4×GMEM_WORDS)`（in_base=0x00100000）与输出段 `[out_base, ...)`（out_base=0x00200000）：按字读写。
 
-两套错误机制对应：C 模型无非 OKAY 响应，越界访问置错误标志（cmodel `memif.err`）；RTL 侧不检查地址范围，从设备错误响应（`rresp/bresp` 非 OKAY）置 `memif_top_err`（intf_spec §10）。单元验证的激励生成保证 icache 请求地址落在指令段、l1sm 请求地址落在两段全局数据区内（读留 8 字余量，§10）。
+两套错误机制对应：C 模型无非 OKAY 响应，越界访问置错误标志（cmodel `memif.err`）；RTL 侧不检查地址范围，从设备错误响应（`rresp/bresp` 非 OKAY）置 `memif_top_err`（intf_spec §9）。单元验证的激励生成保证 icache 请求地址落在指令段、l1sm 请求地址落在两段全局数据区内（读留 8 字余量，§10）。
 
 ### 1.4 时序模型
 
@@ -86,7 +86,7 @@ memif 是片外唯一通道（ma_spec §10），职责：
 
 ## 2. 端口
 
-端口命名、方向与位宽见 intf_spec §10（内部侧 + 对外 AXI4 五通道；AXI 参数见 intf_spec §1.4；单源规则见 intf_spec §1）。`clk`/`rst_n` 按 intf_spec §1.3 携带。无模块级增设端口。
+端口命名、方向与位宽见 intf_spec §9（内部侧 + 对外 AXI4 五通道；AXI 参数见 intf_spec §1.4；单源规则见 intf_spec §1）。`clk`/`rst_n` 按 intf_spec §1.3 携带。无模块级增设端口。
 
 模块补充（行为约束，详见 §9）：
 
@@ -287,8 +287,8 @@ rvalid      1     1     1
 2. `vld` 不组合依赖于本通道 `rdy`：内部响应 `vld` 依赖 `rvalid`/`bvalid`（从设备侧，不依赖本模块 `rready`）；AXI 请求 `valid` 依赖内部请求 `vld`（源侧）；
 3. 内部请求源只发合法载荷：icache 恒读、l1sm 读/写（`rw`），地址对齐由上游保证（isa_spec §1.10 口径归上游，本模块不检测）；
 4. 单请求在途：`S_RSP`/`S_WREQ` 期间两路内部请求 `rdy = 0`；
-5. 固定优先级 icache 优先（ma_spec §10）：两源同拍挂起时 l1sm `rdy` 被 `icache_memif_req_vld` 压制；
-6. AXI v1 约束（intf_spec §10）：ID 恒 0；`arburst=awburst=2'b01`（INCR）；读 `arlen=0`、`arsize=3'b101` 单拍整行；写 `awlen=0`、`awsize=3'b010` 4B 窄传、`wdata` 按 `awaddr[4:2]` 定位、`wstrb` 置对应 4 字节、`wlast=1`、等 BRESP 返回才算完成；
+5. 固定优先级 icache 优先（ma_spec §9）：两源同拍挂起时 l1sm `rdy` 被 `icache_memif_req_vld` 压制；
+6. AXI v1 约束（intf_spec §9）：ID 恒 0；`arburst=awburst=2'b01`（INCR）；读 `arlen=0`、`arsize=3'b101` 单拍整行；写 `awlen=0`、`awsize=3'b010` 4B 窄传、`wdata` 按 `awaddr[4:2]` 定位、`wstrb` 置对应 4 字节、`wlast=1`、等 BRESP 返回才算完成；
 7. `axi_rid`/`axi_bid`/`axi_rlast` 不检测（单在途、单拍整行）；
 8. `rresp`/`bresp` 非 OKAY：响应呈现拍检测、次拍起 `memif_top_err = 1` 并保持至复位；响应照常交付（§5.4）；
 9. 写请求 AW/W 握手分离时经 `S_WREQ` 补齐，内部受理以两通道均完成为准（§6.2）；tb 从设备请求通道恒 ready，单元验证不激发该路径。

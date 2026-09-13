@@ -161,17 +161,17 @@ static void run_test(Vrf *top, VerilatedVcdC *tfp, const char *name,
 
     // ---- 复位 ----
     top->rst_n = 0;
-    top->sf_rf_rd_vld = 0;
-    top->sf_rf_rd_warp_id = 0;
-    top->sf_rf_rd_rs1 = 0;
-    top->sf_rf_rd_rs2 = 0;
-    top->sf_rf_rddata_rdy = 0;
+    top->ws_rf_rd_vld = 0;
+    top->ws_rf_rd_warp_id = 0;
+    top->ws_rf_rd_rs1 = 0;
+    top->ws_rf_rd_rs2 = 0;
+    top->ws_rf_rddata_rdy = 0;
     for (int s = 0; s < 3; s++) drv_wb(top, s, 0, 0);
     top->clk = 0; top->eval(); if (tfp) tfp->dump(gtime++);
     // 复位保持 70 拍：SRAM 宏版在复位期间做宏清零扫描（两口并行，共 64 拍），
     // 保持 ≥64 拍方能扫全阵（寄存器版不受影响）
     for (int i = 0; i < 70; i++) {
-        if (top->rf_sf_rddata_vld)
+        if (top->rf_ws_rddata_vld)
             err("rddata vld not 0 during reset");
         top->clk = 1; top->eval(); if (tfp) tfp->dump(gtime++);
         top->clk = 0; top->eval(); if (tfp) tfp->dump(gtime++);
@@ -196,38 +196,38 @@ static void run_test(Vrf *top, VerilatedVcdC *tfp, const char *name,
             drv_wb(top, s, offer_wb[s],
                    offer_wb[s] ? &wbq[s][wbq_h[s] & 65535] : 0);
         }
-        top->sf_rf_rd_vld = offer_rd;
+        top->ws_rf_rd_vld = offer_rd;
         if (offer_rd) {
-            top->sf_rf_rd_warp_id = txr->warp_id;
-            top->sf_rf_rd_rs1 = txr->rs1;
-            top->sf_rf_rd_rs2 = txr->rs2;
+            top->ws_rf_rd_warp_id = txr->warp_id;
+            top->ws_rf_rd_rs1 = txr->rs1;
+            top->ws_rf_rd_rs2 = txr->rs2;
         } else {
-            top->sf_rf_rd_warp_id = 0;
-            top->sf_rf_rd_rs1 = 0;
-            top->sf_rf_rd_rs2 = 0;
+            top->ws_rf_rd_warp_id = 0;
+            top->ws_rf_rd_rs1 = 0;
+            top->ws_rf_rd_rs2 = 0;
         }
-        top->sf_rf_rddata_rdy = r;
+        top->ws_rf_rddata_rdy = r;
         top->eval();
 
         // -- 锁步不变量：参考应答在途 == DUT 应答在途 --
-        if (ref.rf_sf_rddata.vld != (int)top->rf_sf_rddata_vld)
+        if (ref.rf_ws_rddata.vld != (int)top->rf_ws_rddata_vld)
             err("rddata vld divergence between DUT and ref");
 
         // -- 协议保持检查：上一拍 vld && !rdy，则本拍 vld 不撤、载荷不变 --
         if (p_rsp_v && !p_rsp_r) {
-            if (!top->rf_sf_rddata_vld)
+            if (!top->rf_ws_rddata_vld)
                 err("rddata vld dropped under backpressure");
             else
                 for (int l = 0; l < NLANES; l++)
-                    if (top->rf_sf_rddata_a[l] != p_rsp_a[l] ||
-                        top->rf_sf_rddata_b[l] != p_rsp_b[l]) {
+                    if (top->rf_ws_rddata_a[l] != p_rsp_a[l] ||
+                        top->rf_ws_rddata_b[l] != p_rsp_b[l]) {
                         err("rddata payload changed under backpressure");
                         break;
                     }
         }
 
         // -- rdy 组合函数检查（§2 模块补充） --
-        if ((int)top->rf_sf_rd_rdy != (!top->rf_sf_rddata_vld || r))
+        if ((int)top->rf_ws_rd_rdy != (!top->rf_ws_rddata_vld || r))
             err("rd_rdy inconsistent with in-flight response");
         if (!top->rf_lsu_wb_rdy)
             err("lsu wb rdy not always 1");
@@ -237,7 +237,7 @@ static void run_test(Vrf *top, VerilatedVcdC *tfp, const char *name,
             err("falu wb rdy violates priority");
 
         // -- 本拍末沿将发生的发射 --
-        int d_rdacc = offer_rd && top->rf_sf_rd_rdy;
+        int d_rdacc = offer_rd && top->rf_ws_rd_rdy;
         int d_wb[3], d_nwb = 0;
         for (int s = 0; s < 3; s++) {
             d_wb[s] = offer_wb[s] && dut_wb_rdy(top, s);
@@ -245,32 +245,32 @@ static void run_test(Vrf *top, VerilatedVcdC *tfp, const char *name,
         }
         if (d_nwb > 1)
             err("multiple write handshakes in one cycle");
-        int d_rsp = top->rf_sf_rddata_vld && r;
+        int d_rsp = top->rf_ws_rddata_vld && r;
 
         // -- 参考推进（先消费应答，再置激励，后 rf_step；同激励、同背压） --
         int r_rsp = 0;
-        if (ref.rf_sf_rddata.vld && r) {
+        if (ref.rf_ws_rddata.vld && r) {
             r_rsp = 1;
             // 载荷位精确比对（a/b 逐 lane）
             for (int l = 0; l < NLANES; l++) {
-                if (ref.rf_sf_rddata.p.a[l] != top->rf_sf_rddata_a[l]) {
+                if (ref.rf_ws_rddata.p.a[l] != top->rf_ws_rddata_a[l]) {
                     err("rddata a mismatch"); break;
                 }
             }
             for (int l = 0; l < NLANES; l++) {
-                if (ref.rf_sf_rddata.p.b[l] != top->rf_sf_rddata_b[l]) {
+                if (ref.rf_ws_rddata.p.b[l] != top->rf_ws_rddata_b[l]) {
                     err("rddata b mismatch"); break;
                 }
             }
-            ref.rf_sf_rddata.vld = 0;
+            ref.rf_ws_rddata.vld = 0;
             cnt_rsp++;
         }
         if (r_rsp != d_rsp)
             err("rddata handshake divergence between DUT and ref");
 
-        if (offer_rd && !ref.sf_rf_rd.vld) {
-            ref.sf_rf_rd.p = *txr;
-            ref.sf_rf_rd.vld = 1;
+        if (offer_rd && !ref.ws_rf_rd.vld) {
+            ref.ws_rf_rd.p = *txr;
+            ref.ws_rf_rd.vld = 1;
         }
         int wb_before[3];
         for (int s = 0; s < 3; s++) {
@@ -283,12 +283,12 @@ static void run_test(Vrf *top, VerilatedVcdC *tfp, const char *name,
                 err("ref wb vld set without stimulus");
             wb_before[s] = c->vld;
         }
-        int rd_before = ref.sf_rf_rd.vld;
+        int rd_before = ref.ws_rf_rd.vld;
 
         rf_step(&ref);
 
         // -- 握手逐拍一致性：写口（含仲裁结果）与读请求 --
-        int r_rdacc = rd_before && !ref.sf_rf_rd.vld;
+        int r_rdacc = rd_before && !ref.ws_rf_rd.vld;
         if (r_rdacc != d_rdacc)
             err("rd request handshake divergence between DUT and ref");
         if (d_rdacc) { cnt_rd++; rdq_h++; }
@@ -300,10 +300,10 @@ static void run_test(Vrf *top, VerilatedVcdC *tfp, const char *name,
         }
 
         // -- 影子更新 --
-        p_rsp_v = top->rf_sf_rddata_vld; p_rsp_r = r;
+        p_rsp_v = top->rf_ws_rddata_vld; p_rsp_r = r;
         for (int l = 0; l < NLANES; l++) {
-            p_rsp_a[l] = top->rf_sf_rddata_a[l];
-            p_rsp_b[l] = top->rf_sf_rddata_b[l];
+            p_rsp_a[l] = top->rf_ws_rddata_a[l];
+            p_rsp_b[l] = top->rf_ws_rddata_b[l];
         }
 
         // -- 时钟上升沿 --
@@ -313,9 +313,9 @@ static void run_test(Vrf *top, VerilatedVcdC *tfp, const char *name,
 
         if (rdq_h == rdq_t &&
             wbq_h[0] == wbq_t[0] && wbq_h[1] == wbq_t[1] && wbq_h[2] == wbq_t[2] &&
-            !ref.sf_rf_rd.vld &&
+            !ref.ws_rf_rd.vld &&
             !ref.lsu_rf_wb.vld && !ref.ialu_rf_wb.vld && !ref.falu_rf_wb.vld &&
-            !ref.rf_sf_rddata.vld && !top->rf_sf_rddata_vld)
+            !ref.rf_ws_rddata.vld && !top->rf_ws_rddata_vld)
             finished = 1;
     }
 
@@ -323,8 +323,8 @@ static void run_test(Vrf *top, VerilatedVcdC *tfp, const char *name,
     if (rdq_h != rdq_t) err("rd stimulus not drained");
     for (int s = 0; s < 3; s++)
         if (wbq_h[s] != wbq_t[s]) err("wb stimulus not drained");
-    if (ref.rf_sf_rddata.vld) err("ref rddata pending at end");
-    if (top->rf_sf_rddata_vld) err("DUT rddata pending at end");
+    if (ref.rf_ws_rddata.vld) err("ref rddata pending at end");
+    if (top->rf_ws_rddata_vld) err("DUT rddata pending at end");
     if (ref.err) err("ref reported error");
 
     total_errors += errors;

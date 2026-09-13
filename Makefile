@@ -4,7 +4,7 @@
 #  目录约定（详见 README）：
 #    top/       顶层单元 + 工具目录：docs/（三份规范）/ rtl/ / tb/ /
 #               cmodel/ / assembler/ / kernel/
-#    submodules/  10 个硬件子模块（sf ws bs ialu falu lsu icache l1sm memif rf），
+#    submodules/  9 个硬件子模块（ws bs ialu falu lsu icache l1sm memif rf），
 #               与 top/ 同级；每个镜像 docs/ + rtl/ + tb/ 结构
 #    tmp/       一切编译 / 综合 / 仿真的中间产物与报告，与 top 同级；
 #               make clean 清空整个 tmp/（此目录不入库）
@@ -83,7 +83,7 @@ SRAM_MACROS := sram_2rw0r0w_32_128_freepdk45:32:128:2:freepdk45
 rf_SRAMS := sram_2rw0r0w_32_128_freepdk45
 
 # ---- 硬件子模块清单（与 ma_spec §1.4 一致；每个模块目录镜像 docs/rtl/tb）----
-MODULES := sf ws bs ialu falu lsu icache l1sm memif rf
+MODULES := ws bs ialu falu lsu icache l1sm memif rf
 
 # 黄金回归参数（ma_spec §1.7 easy_simt 硬件口径，与模型编译参数一致，可覆盖）
 KERNEL ?= $(KERNEL_HEX)

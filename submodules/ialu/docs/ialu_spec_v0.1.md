@@ -12,17 +12,17 @@
 
 ### 1.1 模块定位与职责
 
-ialu 是整数执行单元，职责为**整数运算 + 分支解析**（ma_spec §5）：
+ialu 是整数执行单元，职责为**整数运算 + 分支解析**（ma_spec §4）：
 
 - 数据通路 **8 lane 并行、锁步**：一拍对 8 个 lane 同时运算，产出 `wdata[8×32]`（写回数据）与 `taken[7:0]`（每 lane 分支判定）；
-- 谓词寄存器 P0..P3 物理上驻留本模块（ma_spec §5）：SETP 写、BR 读，直接喂分支判定；
-- 分支解析：算出每 lane taken 向量、跳转目标、BRT 表项索引，经 `ialu_sf_br` 回注 sf。
+- 谓词寄存器 P0..P3 物理上驻留本模块（ma_spec §4）：SETP 写、BR 读，直接喂分支判定；
+- 分支解析：算出每 lane taken 向量、跳转目标、BRT 表项索引，经 `ialu_ws_br` 回注 ws。
 
-边界：分支的**判定**在本模块，**处置**（压栈、换 mask、重定向）在 sf（ma_spec §1.4）；JOIN 由 sf 本地处置、不经本模块（sim_common.h 偏差 C4）；BAR/RET 不下发执行单元（ma_spec §2）；FMUL/FADD/FNEG 归 falu，LDG/STG/LDS/STS 归 lsu。
+边界：分支的**判定**在本模块，**处置**（压栈、换 mask、重定向）在 ws（ma_spec §1.4）；JOIN 由 ws 本地处置、不经本模块（sim_common.h 偏差 C4）；BAR/RET 不下发执行单元（ma_spec §2）；FMUL/FADD/FNEG 归 falu，LDG/STG/LDS/STS 归 lsu。
 
 ### 1.2 指令集范围与完成路径
 
-本模块接受 10 种操作码（sf 分派结果，与 cmodel 分派集合一致），按完成路径分三类：
+本模块接受 10 种操作码（ws 分派结果，与 cmodel 分派集合一致），按完成路径分三类：
 
 | 操作码 | 助记符 | 完成路径 |
 |---|---|---|
@@ -39,21 +39,21 @@ ialu 是整数执行单元，职责为**整数运算 + 分支解析**（ma_spec 
 
 同一时刻至多一条指令在途；完成路径内各通道事务严格顺序发出（§5、§6）。
 
-### 1.3 sf 侧载荷约定
+### 1.3 ws 侧载荷约定
 
-载荷均为 sf 译码期归一化后的形式（与 `top/cmodel/ialu.c` 头注一致）：
+载荷均为 ws 译码期归一化后的形式（与 `top/cmodel/ialu.c` 头注一致）：
 
 | 操作码 | 载荷约定 |
 |---|---|
-| IADD/SHL/XOR | `opa = R[ra]`；`opb` = 第二源（寄存器值或立即数广播，由 sf 选定） |
+| IADD/SHL/XOR | `opa = R[ra]`；`opb` = 第二源（寄存器值或立即数广播，由 ws 选定） |
 | ORI | `opa = R[ra]`；`opb` = 零扩展立即数广播 |
 | LUI | `opa` = `imm20 << 12` 广播，直通产出（偏差 C3） |
 | LDP/CSRR | `opa` = 参数/特殊寄存器值广播（CSRR 的 TID 为逐 lane 值），直通产出（偏差 C3） |
 | IMAD | `opa = R[ra]`，`opb = R[rb]`，`opc = R[rc]`（第三源，偏差 C5，intf_spec §2 已补勘误） |
 | SETP | `rd = pd`；`imm = (fmt<<3) | cond`；`opa = R[ra]`，`opb = R[rb]` |
-| BR | `rd = psel`；`imm = (u<<31) | (neg<<30) | target`，`target` 为目标字地址（sf 译码已算出绝对目标） |
+| BR | `rd = psel`；`imm = (u<<31) | (neg<<30) | target`，`target` 为目标字地址（ws 译码已算出绝对目标） |
 
-`pc` 字段：本模块接收但不使用——BRT 查表以 sf 自行记录的分支 pc 进行，`ialu_sf_br_brt_idx` 恒置 0（与 cmodel `brt_idx = 0`、sf 按分支 pc 查 BRT 的口径一致）。
+`pc` 字段：本模块接收但不使用——BRT 查表以 ws 自行记录的分支 pc 进行，`ialu_ws_br_brt_idx` 恒置 0（与 cmodel `brt_idx = 0`、ws 按分支 pc 查 BRT 的口径一致）。
 
 ### 1.4 谓词寄存器
 
@@ -70,7 +70,7 @@ ialu 是整数执行单元，职责为**整数运算 + 分支解析**（ma_spec 
 - 所有输出为寄存器输出，`clk` 上升沿更新；
 - 模块间握手统一遵循 intf_spec §1.2 的 vld/rdy 协议：`vld && rdy` 同时为高的时钟上升沿发生一次传输；`vld` 拉起后源模块保持 `vld` 与全部载荷稳定直至握手完成；`vld` 不组合依赖于 `rdy`；
 - 复位为低电平有效异步复位（intf_spec §1.3），复位期间全部 `vld = 0`；
-- 单条指令在途（对应 cmodel `has_issue`）：`ialu_sf_issue_rdy` 仅在空闲时为 1；
+- 单条指令在途（对应 cmodel `has_issue`）：`ialu_ws_issue_rdy` 仅在空闲时为 1；
 - 运算在 issue 握手当拍完成，结果于该拍末沿进入输出级寄存器；自握手后拍起按 §1.2 的完成路径顺序发出事务。
 
 ### 1.6 与 C 模型的对应关系
@@ -81,13 +81,13 @@ ialu 是整数执行单元，职责为**整数运算 + 分支解析**（ma_spec 
 |---|---|
 | `has_issue` | `state != S_IDLE` |
 | `wb_stage == 1` | `state == S_WB`（`ialu_rf_wb_vld`） |
-| `wb_stage == 2` | `state == S_WBD`（`ialu_sf_wbdone_vld`） |
-| `br_stage == 1` | `state == S_BR`（`ialu_sf_br_vld`） |
+| `wb_stage == 2` | `state == S_WBD`（`ialu_ws_wbdone_vld`） |
+| `br_stage == 1` | `state == S_BR`（`ialu_ws_br_vld`） |
 | 排空顺序 br → wb → wbdone 的固定检查序 | 各指令类型完成路径互斥，单路径内顺序发出 |
 | `pred[w][pd]`（每 warp 8 lane 位图） | 谓词寄存器阵列 `pred` |
 | 消费者清零 `vld` 表示收走 | 下游 `rdy` 握手 |
-| 消费侧（sf/rf）有 `vld` 即收走 | testbench 中消费者 `rdy` 可任意背压，协议内行为一致 |
-| `s->err`（非法 opcode 置错） | 不实现：协议约束 sf 只发合法操作码（§9 条 3），本模块无错误端口 |
+| 消费侧（ws/rf）有 `vld` 即收走 | testbench 中消费者 `rdy` 可任意背压，协议内行为一致 |
+| `s->err`（非法 opcode 置错） | 不实现：协议约束 ws 只发合法操作码（§9 条 3），本模块无错误端口 |
 
 偏差说明：
 
@@ -98,22 +98,22 @@ ialu 是整数执行单元，职责为**整数运算 + 分支解析**（ma_spec 
 
 功能验收为事务级等价（ma_spec §1.7：周期只作观测项，不作验收项）：
 
-- 四条通道（`sf_ialu_issue`、`ialu_sf_br`、`ialu_rf_wb`、`ialu_sf_wbdone`）的事务序列逐笔一致，载荷位精确；
+- 四条通道（`ws_ialu_issue`、`ialu_ws_br`、`ialu_rf_wb`、`ialu_ws_wbdone`）的事务序列逐笔一致，载荷位精确；
 - 每条指令的完成路径与发出顺序与 §1.2 一致；
-- 握手不变量：`vld` 保持期载荷稳定；复位期间 `vld` 恒 0；`ialu_sf_issue_rdy` 与在途状态一致。
+- 握手不变量：`vld` 保持期载荷稳定；复位期间 `vld` 恒 0；`ialu_ws_issue_rdy` 与在途状态一致。
 
 ---
 
 ## 2. 端口
 
-端口命名、方向与位宽见 intf_spec §5（单源规则见 intf_spec §1；issue 载荷含 `opc`，见 intf_spec 勘误记录与本规范 §1.3）；`clk`/`rst_n` 按 intf_spec §1.3 携带。无模块级增设端口。
+端口命名、方向与位宽见 intf_spec §4（单源规则见 intf_spec §1；issue 载荷含 `opc`，见 intf_spec 勘误记录与本规范 §1.3）；`clk`/`rst_n` 按 intf_spec §1.3 携带。无模块级增设端口。
 
 模块补充（行为约束，详见 §9）：
 
-- `ialu_sf_issue_rdy` 仅在 `S_IDLE` 为 1；
-- `sf_ialu_issue_pc` 接收但内部不使用（§1.3）；
-- `ialu_sf_br_brt_idx` 恒 0（§1.3）；
-- `sf_ialu_issue_rd` 在 SETP 时承载 `pd`、BR 时承载 `psel`（§1.3）。
+- `ialu_ws_issue_rdy` 仅在 `S_IDLE` 为 1；
+- `ws_ialu_issue_pc` 接收但内部不使用（§1.3）；
+- `ialu_ws_br_brt_idx` 恒 0（§1.3）；
+- `ws_ialu_issue_rd` 在 SETP 时承载 `pd`、BR 时承载 `psel`（§1.3）。
 
 ---
 
@@ -148,7 +148,7 @@ ialu 是整数执行单元，职责为**整数运算 + 分支解析**（ma_spec 
 | `br_target` | 32 | 0 | br 载荷 |
 | `pred` | NWARPS×4×NLANES | 全 0 | 谓词寄存器阵列（§1.4） |
 
-组合输出：`ialu_sf_issue_rdy = (state == S_IDLE)`；`ialu_rf_wb_vld = (state == S_WB)`；`ialu_sf_wbdone_vld = (state == S_WBD)`；`ialu_sf_br_vld = (state == S_BR)`；`ialu_sf_br_brt_idx = 0`。三条输出通道的载荷在各自 `vld` 保持期内由寄存值导出，稳定。
+组合输出：`ialu_ws_issue_rdy = (state == S_IDLE)`；`ialu_rf_wb_vld = (state == S_WB)`；`ialu_ws_wbdone_vld = (state == S_WBD)`；`ialu_ws_br_vld = (state == S_BR)`；`ialu_ws_br_brt_idx = 0`。三条输出通道的载荷在各自 `vld` 保持期内由寄存值导出，稳定。
 
 ---
 
@@ -237,8 +237,8 @@ taken = u ? lane_mask
 |---|---|---|
 | `S_IDLE` | 2'd0 | 空闲，可接受 issue |
 | `S_WB` | 2'd1 | 写回段：`ialu_rf_wb_vld` 保持至握手 |
-| `S_WBD` | 2'd2 | 写回完成段：`ialu_sf_wbdone_vld` 保持至握手 |
-| `S_BR` | 2'd3 | 分支决议段：`ialu_sf_br_vld` 保持至握手 |
+| `S_WBD` | 2'd2 | 写回完成段：`ialu_ws_wbdone_vld` 保持至握手 |
+| `S_BR` | 2'd3 | 分支决议段：`ialu_ws_br_vld` 保持至握手 |
 
 复位释放后进入 `S_IDLE`。
 
@@ -246,7 +246,7 @@ taken = u ? lane_mask
 
 `S_IDLE`：
 
-1. `ialu_sf_issue_rdy = 1`；
+1. `ialu_ws_issue_rdy = 1`；
 2. issue 握手时按操作码分流，当拍完成运算与谓词更新（SETP），结果入对应输出级寄存器：
    - ALU 类（IMAD/IADD/SHL/XOR/ORI/LUI/LDP/CSRR）：锁存 wb 载荷与 wbdone 载荷，转 `S_WB`；
    - SETP：锁存 wbdone 载荷（`rd = pd`），转 `S_WBD`；
@@ -254,9 +254,9 @@ taken = u ? lane_mask
 
 `S_WB`：`ialu_rf_wb_vld = 1`；握手（`wb_fire`）后转 `S_WBD`。
 
-`S_WBD`：`ialu_sf_wbdone_vld = 1`；握手（`wbd_fire`）后转 `S_IDLE`。
+`S_WBD`：`ialu_ws_wbdone_vld = 1`；握手（`wbd_fire`）后转 `S_IDLE`。
 
-`S_BR`：`ialu_sf_br_vld = 1`；握手（`br_fire`）后转 `S_IDLE`。
+`S_BR`：`ialu_ws_br_vld = 1`；握手（`br_fire`）后转 `S_IDLE`。
 
 ### 6.3 状态迁移表
 
@@ -324,7 +324,7 @@ wbd_vld   0    0    0    0    1    0
 ## 8. 复位与上电行为
 
 - `rst_n = 0`（异步）：`state` 回 `S_IDLE`，全部输出级寄存器与谓词阵列按 §4 复位值清零，三条输出通道 `vld = 0`；
-- `rst_n` 释放：进入 `S_IDLE`，`ialu_sf_issue_rdy = 1`，等待 sf 发射，不依赖任何启动握手；
+- `rst_n` 释放：进入 `S_IDLE`，`ialu_ws_issue_rdy = 1`，等待 ws 发射，不依赖任何启动握手；
 - 谓词的块级清零不在本模块（§1.4）。
 
 ---
@@ -333,12 +333,12 @@ wbd_vld   0    0    0    0    1    0
 
 1. `vld` 拉起后保持，与载荷一同稳定至握手完成（intf_spec §1.2）；
 2. `vld` 不组合依赖于 `rdy`：三条输出通道 `vld` 均由状态寄存器译码，满足该条；
-3. sf 只发射合法操作码集合 {IMAD, IADD, SHL, XOR, ORI, LUI, LDP, CSRR, SETP, BR}（sf 分派结果，与 cmodel 分派集合一致）；协议外操作码的行为不作约定（cmodel 置错误标志，本模块无错误端口）；
-4. 单条指令在途：sf 不在上一条指令完成前向本模块发射新指令（cmodel `has_issue` 口径）；`ialu_sf_issue_rdy` 仅在 `S_IDLE` 为 1；
-5. `sf_ialu_issue_pc` 接收但不使用；`ialu_sf_br_brt_idx` 恒 0（BRT 查表由 sf 按分支 pc 完成，§1.3）；
-6. `rd = 0` 时本模块照常发出 wb/wbdone：R0 写忽略由 rf 执行（intf_spec §11），记分板清除由 sf 按 `rd != 0` 执行；
+3. ws 只发射合法操作码集合 {IMAD, IADD, SHL, XOR, ORI, LUI, LDP, CSRR, SETP, BR}（ws 分派结果，与 cmodel 分派集合一致）；协议外操作码的行为不作约定（cmodel 置错误标志，本模块无错误端口）；
+4. 单条指令在途：ws 不在上一条指令完成前向本模块发射新指令（cmodel `has_issue` 口径）；`ialu_ws_issue_rdy` 仅在 `S_IDLE` 为 1；
+5. `ws_ialu_issue_pc` 接收但不使用；`ialu_ws_br_brt_idx` 恒 0（BRT 查表由 ws 按分支 pc 完成，§1.3）；
+6. `rd = 0` 时本模块照常发出 wb/wbdone：R0 写忽略由 rf 执行（intf_spec §10），记分板清除由 ws 按 `rd != 0` 执行；
 7. SETP 的 `rd` 字段承载 `pd ∈ [0,3]`，BR 的 `rd` 字段承载 `psel ∈ [0,3]`（isa_spec §1.7 S/B 型编码）；
-8. `lane_mask` 为发射时 active mask 快照，随路至写回（intf_spec §6 说明）；本模块不修改该快照。
+8. `lane_mask` 为发射时 active mask 快照，随路至写回（intf_spec §5 说明）；本模块不修改该快照。
 
 ---
 
@@ -354,7 +354,7 @@ wbd_vld   0    0    0    0    1    0
 | I4 | 谓词行为 | SETP 按 `lane_mask` 门控写入；BR 的 taken 覆盖 `u`/`neg`/`psel` 与部分掩码组合；各 warp 谓词独立 |
 | I5 | SETP 比较域 | fmt=0 全 6 种 `cond` × 边界整数；fmt=1 全 6 种 `cond` × NaN/±∞/±0/非规格化/±规格化数 |
 | I6 | 协议 | `vld && !rdy` 期间载荷不变、`vld` 不撤（§9 条 1）；复位期间 `vld` 恒 0 |
-| I7 | `ialu_sf_issue_rdy` | 与在途状态一致：无在途为 1，有在途为 0 |
+| I7 | `ialu_ws_issue_rdy` | 与在途状态一致：无在途为 1，有在途为 0 |
 | I8 | 背压 | 三条输出通道消费者 `rdy` 任意组合（恒 1、随机、周期图案，含长背压与背靠背零延迟）下 I1–I7 成立 |
 | I9 | 无死锁 | 全部事务在限界拍数内排空 |
 

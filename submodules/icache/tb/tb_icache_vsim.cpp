@@ -2,7 +2,7 @@
 // easy_simt · icache 的 Verilator harness（开源单仿真路线）
 //
 // 结构：Verilator 把 submodules/icache/rtl/icache.sv 编译为 C++ 模型（Vicache）；
-// 本 harness 扮演 sf 侧（取指请求源 + 指令消费者）与 memif 侧从设备，
+// 本 harness 扮演 ws 侧（取指请求源 + 指令消费者）与 memif 侧从设备，
 // 参考侧直接链接 top/cmodel（icache_step），按事务语义逐拍锁步比对：
 //   - 取指请求受理拍（缺失/响应在途不接受新请求）；
 //   - 指令消费拍与指令字（命中/回填两路径）位精确；
@@ -151,15 +151,15 @@ static void run_test(Vicache *top, VerilatedVcdC *tfp, const char *name, int lat
 
     // ---- 复位 ----
     top->rst_n = 0;
-    top->sf_icache_req_vld = 0;
-    top->sf_icache_req_pc = 0;
-    top->sf_icache_rsp_rdy = 0;
+    top->ws_icache_req_vld = 0;
+    top->ws_icache_req_pc = 0;
+    top->ws_icache_rsp_rdy = 0;
     top->memif_icache_req_rdy = 0;
     top->memif_icache_rsp_vld = 0;
     for (int w = 0; w < ILINE_WORDS; w++) top->memif_icache_rsp_data[w] = 0;
     top->clk = 0; top->eval(); if (tfp) tfp->dump(gtime++);
     for (int i = 0; i < 5; i++) {
-        if (top->icache_memif_req_vld || top->icache_sf_rsp_vld)
+        if (top->icache_memif_req_vld || top->icache_ws_rsp_vld)
             err("vld not 0 during reset");
         top->clk = 1; top->eval(); if (tfp) tfp->dump(gtime++);
         top->clk = 0; top->eval(); if (tfp) tfp->dump(gtime++);
@@ -171,14 +171,14 @@ static void run_test(Vicache *top, VerilatedVcdC *tfp, const char *name, int lat
     int finished = 0;
     while (!finished && cyc < cap) {
         // -- 消费者/从设备就绪决策（两路独立） --
-        int r_sf = rdy_of(&cfg_rsp);
+        int r_ws = rdy_of(&cfg_rsp);
         int r_mq = rdy_of(&cfg_mreq);
 
         // -- 激励：队列头持续给出直至握手 --
         int offer = (pq_h < pq_t);
-        top->sf_icache_req_vld = offer;
-        top->sf_icache_req_pc = offer ? pq[pq_h & 65535].pc : 0;
-        top->sf_icache_rsp_rdy = r_sf;
+        top->ws_icache_req_vld = offer;
+        top->ws_icache_req_pc = offer ? pq[pq_h & 65535].pc : 0;
+        top->ws_icache_rsp_rdy = r_ws;
         top->memif_icache_req_rdy = r_mq;
 
         // -- 从设备响应呈现（寄存值，保持至 DUT 接收） --
@@ -187,33 +187,33 @@ static void run_test(Vicache *top, VerilatedVcdC *tfp, const char *name, int lat
         top->eval();
 
         // -- DUT 输出捕获 --
-        int dut_rsp_v = top->icache_sf_rsp_vld;
+        int dut_rsp_v = top->icache_ws_rsp_vld;
         int dut_mreq_v = top->icache_memif_req_vld;
-        uint32_t c_inst = top->icache_sf_rsp_inst;
+        uint32_t c_inst = top->icache_ws_rsp_inst;
         uint32_t c_maddr = top->icache_memif_req_addr;
 
         // -- 本拍事件 --
-        int d_req_acc = top->sf_icache_req_vld && top->icache_sf_req_rdy;
-        int d_rsp_con = dut_rsp_v && r_sf;
+        int d_req_acc = top->ws_icache_req_vld && top->icache_ws_req_rdy;
+        int d_rsp_con = dut_rsp_v && r_ws;
         int d_mreq = dut_mreq_v && r_mq;
         int d_mrsp = top->memif_icache_rsp_vld && top->icache_memif_rsp_rdy;
 
         // -- rdy/vld 与镜像状态一致性（icache_spec §2/§6） --
-        if (top->icache_sf_req_rdy != (mirror == M_IDLE))
-            err("sf req rdy inconsistent with state");
+        if (top->icache_ws_req_rdy != (mirror == M_IDLE))
+            err("ws req rdy inconsistent with state");
         if (top->icache_memif_rsp_rdy != (mirror == M_REFILL))
             err("memif rsp rdy inconsistent with state");
         if (dut_mreq_v != (mirror == M_REQ))
             err("memif req vld inconsistent with state");
         if (dut_rsp_v != (mirror == M_RSP))
-            err("sf rsp vld inconsistent with state");
+            err("ws rsp vld inconsistent with state");
 
         // -- 协议保持检查：上一拍 vld && !rdy，则本拍 vld 不撤、载荷不变 --
         if (p_rsp_v && !p_rsp_r) {
             if (!dut_rsp_v)
-                err("sf rsp vld dropped under backpressure");
+                err("ws rsp vld dropped under backpressure");
             else if (c_inst != p_inst)
-                err("sf rsp inst changed under backpressure");
+                err("ws rsp inst changed under backpressure");
         }
         if (p_mreq_v && !p_mq) {
             if (!dut_mreq_v)
@@ -223,29 +223,29 @@ static void run_test(Vicache *top, VerilatedVcdC *tfp, const char *name, int lat
         }
 
         // -- 参考同拍推进（置激励 → icache_step → 按同拍 rdy 消费） --
-        if (offer && !ref.sf_icache_req.vld) {
-            ref.sf_icache_req.p.pc = pq[pq_h & 65535].pc;
-            ref.sf_icache_req.vld = 1;
+        if (offer && !ref.ws_icache_req.vld) {
+            ref.ws_icache_req.p.pc = pq[pq_h & 65535].pc;
+            ref.ws_icache_req.vld = 1;
         }
         if (sl_rv && !ref.memif_icache_rsp.vld) {
             for (int w = 0; w < ILINE_WORDS; w++)
                 ref.memif_icache_rsp.p.line[w] = sl_line[w];
             ref.memif_icache_rsp.vld = 1;
         }
-        int had_req = ref.sf_icache_req.vld;
+        int had_req = ref.ws_icache_req.vld;
         int had_mrsp = ref.memif_icache_rsp.vld;
         icache_step(&ref);
-        int r_req_acc = had_req && !ref.sf_icache_req.vld;
+        int r_req_acc = had_req && !ref.ws_icache_req.vld;
         int r_mrsp = had_mrsp && !ref.memif_icache_rsp.vld;
 
         // -- 输出通道逐拍等价（呈现拍与载荷） --
-        if (ref.icache_sf_rsp.vld) {
+        if (ref.icache_ws_rsp.vld) {
             if (!dut_rsp_v)
-                err("ref sf rsp vld but DUT not presenting");
-            else if (c_inst != ref.icache_sf_rsp.p.inst)
-                err("sf rsp inst mismatch");
+                err("ref ws rsp vld but DUT not presenting");
+            else if (c_inst != ref.icache_ws_rsp.p.inst)
+                err("ws rsp inst mismatch");
         } else if (dut_rsp_v) {
-            err("DUT sf rsp vld but ref not presenting");
+            err("DUT ws rsp vld but ref not presenting");
         }
         if (ref.icache_memif_req.vld) {
             if (!dut_mreq_v)
@@ -256,10 +256,10 @@ static void run_test(Vicache *top, VerilatedVcdC *tfp, const char *name, int lat
             err("DUT memif req vld but ref not presenting");
         }
 
-        // -- tb 扮 sf：按同拍 rdy 清参考响应通道 --
+        // -- tb 扮 ws：按同拍 rdy 清参考响应通道 --
         int r_rsp_con = 0;
-        if (ref.icache_sf_rsp.vld && r_sf) {
-            ref.icache_sf_rsp.vld = 0;
+        if (ref.icache_ws_rsp.vld && r_ws) {
+            ref.icache_ws_rsp.vld = 0;
             r_rsp_con = 1;
         }
         // -- tb 从设备：按 DUT 同拍握手清参考回填请求通道 --
@@ -267,7 +267,7 @@ static void run_test(Vicache *top, VerilatedVcdC *tfp, const char *name, int lat
 
         // -- 逐拍一致性 --
         if (d_req_acc != r_req_acc) err("fetch req accept divergence");
-        if (d_rsp_con != r_rsp_con) err("sf rsp consume divergence");
+        if (d_rsp_con != r_rsp_con) err("ws rsp consume divergence");
         if (d_mrsp != r_mrsp) err("memif rsp consume divergence");
 
         // -- 镜像推进（次拍状态，事件互斥于 DUT 状态） --
@@ -285,7 +285,7 @@ static void run_test(Vicache *top, VerilatedVcdC *tfp, const char *name, int lat
         }
 
         // -- 影子更新 --
-        p_rsp_v = dut_rsp_v; p_rsp_r = r_sf; p_inst = c_inst;
+        p_rsp_v = dut_rsp_v; p_rsp_r = r_ws; p_inst = c_inst;
         p_mreq_v = dut_mreq_v; p_mq = r_mq; p_maddr = c_maddr;
 
         // -- 时钟上升沿：DUT 寄存器与从设备同步更新 --
@@ -295,7 +295,7 @@ static void run_test(Vicache *top, VerilatedVcdC *tfp, const char *name, int lat
         cyc++;
 
         if (pq_h == pq_t && mirror == M_IDLE && !sl_pend && !sl_rv &&
-            !ref.sf_icache_req.vld && !ref.icache_sf_rsp.vld &&
+            !ref.ws_icache_req.vld && !ref.icache_ws_rsp.vld &&
             !ref.icache_memif_req.vld && !ref.memif_icache_rsp.vld &&
             !ref.icache.miss && !ref.icache.rsp_pending &&
             !dut_rsp_v && !dut_mreq_v)

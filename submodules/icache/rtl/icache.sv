@@ -1,8 +1,8 @@
 // =============================================================================
-// easy_simt · icache — Instruction Cache（ma_spec §8）
+// easy_simt · icache — Instruction Cache（ma_spec §7）
 //
 // 直接映射指令缓存：32B 行 = 8 条指令，默认 16 行（512B）。缺失阻塞：
-// 缺失期间取指请求挂起（sf 侧记 IMISS），经 memif 回填整行后返回指令。
+// 缺失期间取指请求挂起（ws 侧记 IMISS），经 memif 回填整行后返回指令。
 // 无预取、无无效化（程序只读，上电后内容不变）。
 //
 // 时序结构（icache_spec §1.4/§6/§7）——四态状态机：
@@ -14,10 +14,10 @@
 //   S_RSP    呈现指令，vld 保持至握手，回 S_IDLE。
 // 命中路径受理拍+1 呈现指令；缺失路径回填握手拍+1 呈现指令——与 C 模型
 // icache_step 的步序逐拍同构（icache_spec §1.5/§7.4）。片外固定延迟
-// MEM_LAT 归 tb 侧从设备建模（intf_spec §10），本模块自身不加延迟。
+// MEM_LAT 归 tb 侧从设备建模（intf_spec §9），本模块自身不加延迟。
 //
 // 设计依据：icache/docs/icache_spec_v0.1.md；
-//   端口命名与 intf_spec §8 一致，握手协议与 intf_spec §1.2 一致。
+//   端口命名与 intf_spec §7 一致，握手协议与 intf_spec §1.2 一致。
 // =============================================================================
 `timescale 1ns/1ps
 
@@ -28,15 +28,15 @@ module icache #(
     input  wire                  clk,
     input  wire                  rst_n,
 
-    // sf_icache_req / icache_sf_rsp（intf_spec §8）
-    input  wire                  sf_icache_req_vld,
-    input  wire [31:0]           sf_icache_req_pc,
-    output wire                  icache_sf_req_rdy,
-    output wire                  icache_sf_rsp_vld,
-    output wire [31:0]           icache_sf_rsp_inst,
-    input  wire                  sf_icache_rsp_rdy,
+    // ws_icache_req / icache_ws_rsp（intf_spec §7）
+    input  wire                  ws_icache_req_vld,
+    input  wire [31:0]           ws_icache_req_pc,
+    output wire                  icache_ws_req_rdy,
+    output wire                  icache_ws_rsp_vld,
+    output wire [31:0]           icache_ws_rsp_inst,
+    input  wire                  ws_icache_rsp_rdy,
 
-    // icache_memif_req / memif_icache_rsp（intf_spec §8）
+    // icache_memif_req / memif_icache_rsp（intf_spec §7）
     output wire                  icache_memif_req_vld,
     output wire [31:0]           icache_memif_req_addr,
     input  wire                  memif_icache_req_rdy,
@@ -69,21 +69,21 @@ module icache #(
     // ---------------- 内部状态（icache_spec §4） ----------------
     reg  [1:0]                   state;
     reg  [31:0]                  miss_pc_q;    // 缺失在途的取指 pc
-    reg  [31:0]                  rsp_inst_q;   // 待回送 sf 的指令字
+    reg  [31:0]                  rsp_inst_q;   // 待回送 ws 的指令字
     reg  [ILINE_WORDS*32-1:0]    data [ICACHE_LINES];
     reg  [TAG_W-1:0]             tag  [ICACHE_LINES];
     reg  [ICACHE_LINES-1:0]      valid;
 
     // ---------------- 取指查找（S_IDLE 组合，icache_spec §5.1） -----------
-    wire [31:0]       pc     = sf_icache_req_pc;
+    wire [31:0]       pc     = ws_icache_req_pc;
     wire [LI-1:0]     ld_idx = pc[LW+LI-1:LW];
     wire [TAG_W-1:0]  pc_tag = pc[31:LW];
     wire [ILINE_WORDS*32-1:0] rd_line = data[ld_idx];
     wire [31:0]       rd_word = rd_line[pc[LW-1:0] * 32 +: 32];
     wire              hit = valid[ld_idx] && (tag[ld_idx] == pc_tag);
 
-    assign icache_sf_req_rdy = (state == S_IDLE);
-    wire req_fire = sf_icache_req_vld && icache_sf_req_rdy;
+    assign icache_ws_req_rdy = (state == S_IDLE);
+    wire req_fire = ws_icache_req_vld && icache_ws_req_rdy;
 
     // ---------------- 回填请求地址形成（组合，icache_spec §5.2） ----------
     assign icache_memif_req_vld  = (state == S_REQ);
@@ -99,9 +99,9 @@ module icache #(
     wire [31:0]      wr_word = memif_icache_rsp_data[miss_pc_q[LW-1:0] * 32 +: 32];
 
     // ---------------- 指令呈现（icache_spec §6.1） ------------------------
-    assign icache_sf_rsp_vld  = (state == S_RSP);
-    assign icache_sf_rsp_inst = rsp_inst_q;
-    wire rsp_fire = icache_sf_rsp_vld && sf_icache_rsp_rdy;
+    assign icache_ws_rsp_vld  = (state == S_RSP);
+    assign icache_ws_rsp_inst = rsp_inst_q;
+    wire rsp_fire = icache_ws_rsp_vld && ws_icache_rsp_rdy;
 
     // ---------------- 主状态机（icache_spec §6） ----------------
     always @(posedge clk or negedge rst_n) begin

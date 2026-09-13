@@ -12,16 +12,16 @@
 
 ### 1.1 模块定位与职责
 
-lsu 是访存单元（ma_spec §7），职责：
+lsu 是访存单元（ma_spec §6），职责：
 
 - per-lane 地址生成（基址+偏移，共享内存再叠 SHBASE）；
 - active mask 门控（发射时 active mask 快照，intf_spec §2）；
-- **8-lane 锁步**：一条访存指令在一拍内对全部活跃 lane 同时生成地址、一拍发出一个 8-lane 请求（不逐 lane 串行，ma_spec §7）；
+- **8-lane 锁步**：一条访存指令在一拍内对全部活跃 lane 同时生成地址、一拍发出一个 8-lane 请求（不逐 lane 串行，ma_spec §6）；
 - 请求分 shmem/global 两路（`sm` 标志）；
 - 装载数据引导写回；
 - 向 ws 报停顿（LMISS 置位 / R_NONE 清除）。
 
-边界：本模块保持薄——不含 tag 比较、不含阵列/bank（l1sm 职责，ma_spec §9）；不检测地址对齐（对齐违例为架构错误，isa_spec §1.10，由 sf 侧约束，C 模型置错误标志，本模块无错误端口）；不校验 LDG/STG 基址的 lane 间同值约束（约束 C2，sf 校验）；无分支、谓词与取指通路。请求的命中/缺失/bank 冲突处理与写通路交付均由 l1sm 完成，本模块只消费其应答。
+边界：本模块保持薄——不含 tag 比较、不含阵列/bank（l1sm 职责，ma_spec §8）；不检测地址对齐（对齐违例为架构错误，isa_spec §1.10，由 ws 侧约束，C 模型置错误标志，本模块无错误端口）；不校验 LDG/STG 基址的 lane 间同值约束（约束 C2，ws 校验）；无分支、谓词与取指通路。请求的命中/缺失/bank 冲突处理与写通路交付均由 l1sm 完成，本模块只消费其应答。
 
 ### 1.2 指令集范围与完成路径
 
@@ -32,24 +32,24 @@ lsu 是访存单元（ma_spec §7），职责：
 | STG | 全局存储 | issue → req → rsp（写应答）→ wbdone |
 | STS | 共享存储 | 同 STG |
 
-存储不写 rf（intf_spec §6 写回通道说明），其完成由 `lsu_sf_wbdone` 上报；写通存储等写应答返回才算完成（ma_spec §7）。装载与存储均消费 `l1sm_lsu_rsp`（装载为读数据，存储为写应答）。
+存储不写 rf（intf_spec §5 写回通道说明），其完成由 `lsu_ws_wbdone` 上报；写通存储等写应答返回才算完成（ma_spec §6）。装载与存储均消费 `l1sm_lsu_rsp`（装载为读数据，存储为写应答）。
 
-### 1.3 sf 侧载荷约定
+### 1.3 ws 侧载荷约定
 
-载荷为 sf 译码归一化后的形式（`top/cmodel/lsu.c` 头注）：
+载荷为 ws 译码归一化后的形式（`top/cmodel/lsu.c` 头注）：
 
 - LDG：`opa`=逐 lane 偏移，`imm`=均匀基址（约束 C2）；
 - STG：`opa`=逐 lane 数据，`opb`=逐 lane 偏移，`imm`=均匀基址；
 - LDS：`opa`=逐 lane 偏移；STS：`opa`=数据，`opb`=偏移；
-- `shbase` 为 bs 启动时装载的共享内存基址（`bs_sf_launch`，intf_spec §4），随 issue 包下发（ma_spec §7）；shmem 地址已含 SHBASE（intf_spec §7）；
-- `sf_lsu_issue_opb` 为偏差 C1 增设字段（intf_spec §2 载荷清单未含，与 cmodel 一致，见 §2）；
+- `shbase` 为 bs 启动时装载的共享内存基址（`bs_ws_launch`，intf_spec §3），随 issue 包下发（ma_spec §6）；shmem 地址已含 SHBASE（intf_spec §6）；
+- `ws_lsu_issue_opb` 为偏差 C1 增设字段（intf_spec §2 载荷清单未含，与 cmodel 一致，见 §2）；
 - 地址对齐违例为架构错误（isa_spec §1.10）：本模块不检测，激励须保证活跃 lane 地址 4 字节对齐。
 
 ### 1.4 时序模型
 
-- `lsu_sf_issue_rdy`、`lsu_l1sm_req_vld`、`lsu_l1sm_rsp_rdy`、`lsu_rf_wb_vld`、`lsu_sf_wbdone_vld` 均由状态寄存器译码（§4）；`lsu_ws_stall_vld` 除寄存保持项外含两个组合置位项（LMISS 随发射握手当拍、R_NONE 于空闲拍，§5.4），不组合依赖于本通道 `rdy`；
+- `lsu_ws_issue_rdy`、`lsu_l1sm_req_vld`、`lsu_l1sm_rsp_rdy`、`lsu_rf_wb_vld`、`lsu_ws_wbdone_vld` 均由状态寄存器译码（§4）；`lsu_ws_stall_vld` 除寄存保持项外含两个组合置位项（LMISS 随发射握手当拍、R_NONE 于空闲拍，§5.4），不组合依赖于本通道 `rdy`；
 - 状态机与 C 模型逐拍对应（§1.5）：请求握手后 1 拍为请求接收检测拍（`S_WAIT`）、写回握手后 1 拍为写回接收检测拍（`S_WBW`）；
-- 单条指令在途：自发射握手至 wbdone 握手期间不再接受发射（`lsu_sf_issue_rdy` 仅 `S_IDLE` 为 1）；请求/响应单在途、严格顺序对应、不回带地址（`lsu_l1sm_rsp_rdy` 仅 `S_RSP` 为 1）；
+- 单条指令在途：自发射握手至 wbdone 握手期间不再接受发射（`lsu_ws_issue_rdy` 仅 `S_IDLE` 为 1）；请求/响应单在途、严格顺序对应、不回带地址（`lsu_l1sm_rsp_rdy` 仅 `S_RSP` 为 1）；
 - 复位（低电平有效异步）期间全部输出 `vld = 0`；
 - 模块间握手统一遵循 intf_spec §1.2 的 vld/rdy 协议。
 
@@ -81,7 +81,7 @@ lsu 是访存单元（ma_spec §7），职责：
 
 功能验收为事务级等价（ma_spec §1.7：周期只作观测项，不作验收项）：
 
-- 五条通道的事务序列（顺序 + 载荷）与参考位精确：`lsu_l1sm_req`（`rw`/`sm`/`mask`/`addr`/`wdata` 逐 lane）、`l1sm_lsu_rsp` 消费拍、`lsu_rf_wb`（`warp_id`/`rd`/`lane_mask`/`wdata` 逐 lane）、`lsu_sf_wbdone`、`lsu_ws_stall`（`warp_id`/`reason`）；
+- 五条通道的事务序列（顺序 + 载荷）与参考位精确：`lsu_l1sm_req`（`rw`/`sm`/`mask`/`addr`/`wdata` 逐 lane）、`l1sm_lsu_rsp` 消费拍、`lsu_rf_wb`（`warp_id`/`rd`/`lane_mask`/`wdata` 逐 lane）、`lsu_ws_wbdone`、`lsu_ws_stall`（`warp_id`/`reason`）；
 - 停顿上报语义：LMISS 随发射握手当拍置位、R_NONE 于空闲拍置位、通道在途或清除未发时发射的指令不报 LMISS、R_NONE 可跨指令滞留（§5.4）；
 - 握手不变量：`vld` 保持期载荷稳定；复位期间全部输出 `vld = 0`；`rdy` 与内部状态一致（§1.4）。
 
@@ -89,15 +89,15 @@ lsu 是访存单元（ma_spec §7），职责：
 
 ## 2. 端口
 
-端口命名、方向与位宽见 intf_spec §7（issue 载荷字段见 intf_spec §2；单源规则见 intf_spec §1）。`clk`/`rst_n` 按 intf_spec §1.3 携带。无模块级增设端口。
+端口命名、方向与位宽见 intf_spec §6（issue 载荷字段见 intf_spec §2；单源规则见 intf_spec §1）。`clk`/`rst_n` 按 intf_spec §1.3 携带。无模块级增设端口。
 
 模块补充（行为约束，详见 §9）：
 
-- `lsu_sf_issue_rdy` 仅在 `S_IDLE` 为 1；
+- `lsu_ws_issue_rdy` 仅在 `S_IDLE` 为 1；
 - `lsu_l1sm_rsp_rdy` 仅在 `S_RSP` 为 1；
 - `lsu_ws_stall_vld` 含组合置位项（§5.4），不组合依赖于 `ws_lsu_stall_rdy`；
-- `sf_lsu_issue_opb` 为偏差 C1 增设字段：intf_spec §2 的 `sf_lsu_issue` 载荷清单未含第二个逐 lane 操作数，存储类指令需要「每 lane 数据 + 每 lane 偏移」两个向量，cmodel 与本模块均含 `opb`（LDG/LDS 不读取）；
-- `sf_lsu_issue_imm`/`sf_lsu_issue_shbase` 为 32 位（intf_spec §4 `bs_sf_launch` 同宽下发）。
+- `ws_lsu_issue_opb` 为偏差 C1 增设字段：intf_spec §2 的 `ws_lsu_issue` 载荷清单未含第二个逐 lane 操作数，存储类指令需要「每 lane 数据 + 每 lane 偏移」两个向量，cmodel 与本模块均含 `opb`（LDG/LDS 不读取）；
+- `ws_lsu_issue_imm`/`ws_lsu_issue_shbase` 为 32 位（intf_spec §3 `bs_ws_launch` 同宽下发）。
 
 ---
 
@@ -137,7 +137,7 @@ lsu 是访存单元（ma_spec §7），职责：
 | `stall_pwarp` | 2 | 0 | 在途停顿消息载荷 |
 | `stall_preason` | 3 | 0 | 在途停顿消息载荷（`R_NONE`） |
 
-组合输出：`lsu_sf_issue_rdy = (state == S_IDLE)`；`lsu_l1sm_req_vld = (state == S_REQ)`；`lsu_l1sm_rsp_rdy = (state == S_RSP)`；`lsu_rf_wb_vld = (state == S_WB)`；`lsu_sf_wbdone_vld = (state == S_WBD)`；`lsu_ws_stall_vld = stall_busy || lmiss_go || clear_go`（§5.4）。四条状态译码通道的载荷在各自 `vld` 保持期内由寄存值导出，稳定。
+组合输出：`lsu_ws_issue_rdy = (state == S_IDLE)`；`lsu_l1sm_req_vld = (state == S_REQ)`；`lsu_l1sm_rsp_rdy = (state == S_RSP)`；`lsu_rf_wb_vld = (state == S_WB)`；`lsu_ws_wbdone_vld = (state == S_WBD)`；`lsu_ws_stall_vld = stall_busy || lmiss_go || clear_go`（§5.4）。四条状态译码通道的载荷在各自 `vld` 保持期内由寄存值导出，稳定。
 
 ---
 
@@ -165,11 +165,11 @@ mask    = lane_mask
 wdata[l] = (act[l] && rw) ? opa[l] : 0
 ```
 
-存储数据取 `opa`（§1.3）；装载 `wdata` 为 0。`rw` 0=读 1=写，`sm` 1=共享 0=全局（intf_spec §7）。
+存储数据取 `opa`（§1.3）；装载 `wdata` 为 0。`rw` 0=读 1=写，`sm` 1=共享 0=全局（intf_spec §6）。
 
 ### 5.3 装载数据引导写回
 
-`S_RSP` 握手拍末沿 `wb_wdata[l] <= rdata[l]`（全 8 lane 拷贝，含 mask 外 lane，与 C 模型一致）；写门控由 `wb_lane_mask`（issue 快照随路）交 rf 解释（intf_spec §11）。`rd = 0` 时照常发出 wb/wbdone：R0 写忽略由 rf 执行。存储不走本路径（§1.2）。
+`S_RSP` 握手拍末沿 `wb_wdata[l] <= rdata[l]`（全 8 lane 拷贝，含 mask 外 lane，与 C 模型一致）；写门控由 `wb_lane_mask`（issue 快照随路）交 rf 解释（intf_spec §10）。`rd = 0` 时照常发出 wb/wbdone：R0 写忽略由 rf 执行。存储不走本路径（§1.2）。
 
 ### 5.4 停顿上报通路
 
@@ -195,13 +195,13 @@ stall_vld = stall_busy || lmiss_go || clear_go
 
 | 状态 | 编码 | 行为 |
 |---|---|---|
-| `S_IDLE` | 0 | 空闲：`lsu_sf_issue_rdy = 1`；兼作 wbdone 接收检测拍（上一拍握手后回到本状态即完成）与 R_NONE 置位拍（§5.4） |
+| `S_IDLE` | 0 | 空闲：`lsu_ws_issue_rdy = 1`；兼作 wbdone 接收检测拍（上一拍握手后回到本状态即完成）与 R_NONE 置位拍（§5.4） |
 | `S_REQ` | 1 | 请求段：`lsu_l1sm_req_vld = 1`，载荷为 §5.1/§5.2 入级值，保持至握手 |
 | `S_WAIT` | 2 | 请求接收检测拍（镜像 C 模型 `req_stage` 2，§1.5）：无条件迁移 `S_RSP` |
 | `S_RSP` | 3 | 响应段：`lsu_l1sm_rsp_rdy = 1`，等待并消费 `l1sm_lsu_rsp` |
 | `S_WB` | 4 | 写回段（仅装载）：`lsu_rf_wb_vld = 1`，保持至握手 |
 | `S_WBW` | 5 | 写回接收检测拍（镜像 C 模型 `req_stage` 4 检测，§1.5）：无条件迁移 `S_WBD` |
-| `S_WBD` | 6 | 写回完成段：`lsu_sf_wbdone_vld = 1`，保持至握手 |
+| `S_WBD` | 6 | 写回完成段：`lsu_ws_wbdone_vld = 1`，保持至握手 |
 
 ### 6.2 状态行为
 
@@ -290,7 +290,7 @@ stall_rdy  1         x              stall_rdy  x    1          x
 ## 8. 复位与上电行为
 
 - `rst_n = 0`（异步）：`state` 回 `S_IDLE`，全部寄存器按 §4 复位值清零，五条输出通道 `vld = 0`；
-- `rst_n` 释放：进入 `S_IDLE`，`lsu_sf_issue_rdy = 1`，等待 sf 发射，不依赖任何启动握手；
+- `rst_n` 释放：进入 `S_IDLE`，`lsu_ws_issue_rdy = 1`，等待 ws 发射，不依赖任何启动握手；
 - 本模块无跨指令持久状态（`stall_warp` 为最近一次发射的 warp_id，复位 0；停顿上报状态机复位后无在途、无待发清除），复位后即为可用的初始状态。
 
 ---
@@ -299,12 +299,12 @@ stall_rdy  1         x              stall_rdy  x    1          x
 
 1. `vld` 拉起后保持，与载荷一同稳定至握手完成（intf_spec §1.2）：四条状态译码通道由状态保持；`lsu_ws_stall` 组合置位未被消费则锁存保持（§5.4）；
 2. `vld` 不组合依赖于本通道 `rdy`：四条状态译码通道由状态寄存器译码；`lsu_ws_stall_vld` 不依赖 `ws_lsu_stall_rdy`，但含发射握手组合项（§5.4，与 C 模型同拍上报口径一致）；
-3. sf 只发射合法操作码集合 {LDG, STG, LDS, STS}（sf 分派结果，与 cmodel 分派集合一致）；协议外操作码的行为不作约定（cmodel 置错误标志，本模块无错误端口）；地址对齐违例为架构错误（isa_spec §1.10），本模块不检测（§1.3）；
-4. 单条指令在途：sf 不在上一条指令完成前向本模块发射新指令（cmodel `busy` 口径）；`lsu_sf_issue_rdy` 仅在 `S_IDLE` 为 1；
-5. `rd = 0` 时装载照常发出 wb/wbdone：R0 写忽略由 rf 执行（intf_spec §11），记分板清除由 sf 按 `rd != 0` 执行；存储不写 rf，其完成由 `lsu_sf_wbdone` 上报（intf_spec §6 说明）；
+3. ws 只发射合法操作码集合 {LDG, STG, LDS, STS}（ws 分派结果，与 cmodel 分派集合一致）；协议外操作码的行为不作约定（cmodel 置错误标志，本模块无错误端口）；地址对齐违例为架构错误（isa_spec §1.10），本模块不检测（§1.3）；
+4. 单条指令在途：ws 不在上一条指令完成前向本模块发射新指令（cmodel `busy` 口径）；`lsu_ws_issue_rdy` 仅在 `S_IDLE` 为 1；
+5. `rd = 0` 时装载照常发出 wb/wbdone：R0 写忽略由 rf 执行（intf_spec §10），记分板清除由 ws 按 `rd != 0` 执行；存储不写 rf，其完成由 `lsu_ws_wbdone` 上报（intf_spec §5 说明）；
 6. `lane_mask` 为发射时 active mask 快照，随路至写回（intf_spec §2）；本模块不修改该快照；mask 外 lane 请求地址/数据为 0（§5.1/§5.2），装载 `wb_wdata` 仍全 8 lane 拷贝响应数据（§5.3，与 C 模型一致）；
-7. 请求/响应单在途、严格顺序对应、不回带地址（intf_spec §7）：`lsu_l1sm_rsp_rdy` 仅在 `S_RSP` 为 1；响应最早于请求握手后第 2 拍被消费（`S_WAIT` 检测拍，§7.1）；
-8. 写通存储等写应答返回才算完成（ma_spec §7）：STG/STS 于 `S_RSP` 消费写应答后进入 `S_WBD`（§6.3）。
+7. 请求/响应单在途、严格顺序对应、不回带地址（intf_spec §6）：`lsu_l1sm_rsp_rdy` 仅在 `S_RSP` 为 1；响应最早于请求握手后第 2 拍被消费（`S_WAIT` 检测拍，§7.1）；
+8. 写通存储等写应答返回才算完成（ma_spec §6）：STG/STS 于 `S_RSP` 消费写应答后进入 `S_WBD`（§6.3）。
 
 ---
 
@@ -324,4 +324,4 @@ stall_rdy  1         x              stall_rdy  x    1          x
 | L8 | 背压 | 四消费者 `rdy` 任意组合（恒 1、随机、重背压）与响应延迟任意（含长延迟）下 L1–L7 成立 |
 | L9 | 无死锁 | 全部事务在限界拍数内排空（含停顿通道重背压下 R_NONE 最终消费） |
 
-参考模型：testbench（Verilator C++ harness）直接链接 `top/cmodel`（`lsu_step`），扮演 l1sm（消费请求、按随机延迟呈现响应）与 rf/sf/ws 消费者，参考事务序列与 DUT 事务序列按拍在线比对（§1.5）。
+参考模型：testbench（Verilator C++ harness）直接链接 `top/cmodel`（`lsu_step`），扮演 l1sm（消费请求、按随机延迟呈现响应）与 rf/ws/ws 消费者，参考事务序列与 DUT 事务序列按拍在线比对（§1.5）。
