@@ -435,11 +435,11 @@ static void build_op_fadd(void)
     fill(A, 0x3F800000u); fill(B, 0x337FFFFFu); emit_fp(OP_FADD, 30, 0, 0xFF, A, B);
     fill(A, 0x3F800001u); fill(B, 0x33800000u); emit_fp(OP_FADD, 31, 0, 0xFF, A, B);
 
-    /* 逐 lane 混排 */
+    /* 逐 lane 混排（rd 限 5 位端口范围内：REG_AW=5，激励不得越界 31） */
     for (int l = 0; l < NLANES; l++) { A[l] = pool[l]; B[l] = pool[(l + 9) % POOL_N]; }
-    emit_fp(OP_FADD, 32, 1, 0xFF, A, B);
+    emit_fp(OP_FADD, 12, 1, 0xFF, A, B);
     for (int l = 0; l < NLANES; l++) { A[l] = pool[(l * 5 + 1) % POOL_N]; B[l] = pool[(l * 3 + 4) % POOL_N]; }
-    emit_fp(OP_FADD, 33, 2, 0xFF, A, B);
+    emit_fp(OP_FADD, 13, 2, 0xFF, A, B);
 
     /* rd = R0 */
     fill(A, 0x3F800000u); fill(B, 0x3F800000u); emit_fp(OP_FADD, 0, 0, 0xFF, A, B);
