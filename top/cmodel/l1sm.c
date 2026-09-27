@@ -75,11 +75,13 @@ int l1sm_step(sim_t *s)
                         m->glane = l + 1;
                     } else {
                         s->st.l1_miss++;
+                        m->glane = l;    /* 同步游标：回填该活动 lane 的行 */
                         m->stage = L_RFILL_SET;   /* 阻塞回填 */
                     }
                 } else {
                     if (hit)                       /* 写直通：命中更新行内字 */
                         m->data[phys][word] = m->req.wdata[l];
+                    m->glane = l;    /* 同步游标：写通自该活动 lane 起 */
                     m->stage = L_WR_SET;           /* 写直通等 BRESP 应答 */
                 }
             }

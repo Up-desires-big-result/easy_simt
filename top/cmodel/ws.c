@@ -4,9 +4,9 @@
  * SIMT 前端与 warp 调度合一：每 warp 一份 PC、active mask、分化栈（深 4）；
  * 取指发起、定长译码、立即数扩展、ld.param/csr 值构造；冒险检测与互锁
  * （记分板，互锁不转发）；issue 分派；SIMT 分化控制（判定在 ialu，
- * 处置在本模块）；warp 粒度调度（按 warp id 顺序轮转选发射）、
- * 汇聚停顿源（lsu）、bar.sync 到达计数、凑齐 NWARPS 统一释放、
- * 块完成判定（全 warp DONE 后发 block_done）。
+ * 处置在本模块）；warp 粒度调度（RUN_TO_DONE 单 warp 独占、阻塞至
+ * 屏障或完成）、汇聚停顿源（lsu）、bar.sync 到达计数、凑齐 NWARPS
+ * 统一释放、块完成判定（全 warp DONE 后发 block_done）。
  *
  * 每 warp 指令流：调度选中 → 取指（IMISS）→ 译码/冒险（HAZARD）→
  * 读 rf → 发射（EXEC/BRSTALL）→ wbdone/分支决议 → 回到可调度态。
@@ -471,8 +471,34 @@ static void bar_arrive(sim_t *s, int w)
             for (int i = 0; i < NWARPS; i++)
                 sc->barrier[i] = 0;
             sc->bar_count = 0;
+            /* 释放后自等待中 id 最小的 warp 恢复发射（ma_spec §2） */
+            for (int i = 0; i < NWARPS; i++)
+                if (!sc->done[i]) { sc->cur_warp = i; break; }
         }
     }
+}
+
+/* ---------------- 调度推进（RUN_TO_DONE，ma_spec §2） ---------------- */
+/* warp ret：置 DONE 后推进到下一个非 DONE 的 warp（id 序环扫） */
+static void sched_advance_done(sim_t *s)
+{
+    ws_t *sc = &s->ws;
+    for (int i = 1; i <= NWARPS; i++) {
+        int w = (sc->cur_warp + i) % NWARPS;
+        if (!sc->done[w]) { sc->cur_warp = w; return; }
+    }
+    /* 全部 DONE：保持原值，块完成路径接管 */
+}
+
+/* warp 到达 bar.sync：推进到下一个非 DONE 且非 BARRIER 的 warp */
+static void sched_advance_barrier(sim_t *s)
+{
+    ws_t *sc = &s->ws;
+    for (int i = 1; i <= NWARPS; i++) {
+        int w = (sc->cur_warp + i) % NWARPS;
+        if (!sc->done[w] && !sc->barrier[w]) { sc->cur_warp = w; return; }
+    }
+    /* 余者皆 DONE/BARRIER：保持原值，等屏障凑齐或块完成 */
 }
 
 /* ---------------- 译码入口 ---------------- */
@@ -501,6 +527,8 @@ static void decode_and_advance(sim_t *s, int w)
         wp->pc = pc0 + 1;
         if (f->lsu_out[w] == 0) {
             bar_arrive(s, w);
+            if (w == f->cur_warp)
+                sched_advance_barrier(s);
             wp->state = WS_BAR;
             set_des(s, w, R_NONE);
         } else {
@@ -514,6 +542,8 @@ static void decode_and_advance(sim_t *s, int w)
         wp->pc = pc0 + 1;
         wp->state = WS_DONE;
         f->done[w] = 1;
+        if (w == f->cur_warp)
+            sched_advance_done(s);
         set_des(s, w, R_DONE);
         return;
     case OP_JOIN: {
@@ -645,7 +675,7 @@ int ws_step(sim_t *s)
             f->done[w] = 0;
         }
         f->bar_count = 0;
-        f->ptr = 0;
+        f->cur_warp = 0;
         f->bdone_sent = 0;
         s->bs_ws_launch.vld = 0;
         s->st.fires++;
@@ -747,22 +777,18 @@ int ws_step(sim_t *s)
         fired++;
     }
 
-    /* ============ 调度授予：选定 warp 直接启动取指（单在途取指） ============ */
+    /* ===== 调度授予：RUN_TO_DONE 单 warp 独占（ma_spec §2），选定即取指 ===== */
     if (f->launched && f->fetch_warp < 0 && !f->fetch_pend) {
-        for (int i = 0; i < NWARPS; i++) {
-            int w = (f->ptr + i) % NWARPS;
-            if (!warp_runnable(s, w))
-                continue;
+        int w = f->cur_warp;
+        if (warp_runnable(s, w)) {
             int st = f->w[w].state;
-            if (st != WS_IDLE && st != WS_BAR)
-                continue;
-            /* 启动新指令：发起取指 */
-            f->w[w].state = WS_FETCH;
-            f->fetch_warp = w;
-            f->fetch_pend = 1;
-            set_des(s, w, R_IMISS);
-            f->ptr = (w + 1) % NWARPS;
-            break;
+            if (st == WS_IDLE || st == WS_BAR) {
+                /* 启动新指令：发起取指 */
+                f->w[w].state = WS_FETCH;
+                f->fetch_warp = w;
+                f->fetch_pend = 1;
+                set_des(s, w, R_IMISS);
+            }
         }
     }
 
@@ -780,9 +806,11 @@ int ws_step(sim_t *s)
             break;
         case WS_HAZ:
             if (f->bar_pending[w]) {
-                /* 屏障：等 LSU 排空 */
+                /* 屏障：等 LSU 排空，排空即到达（回合结束点） */
                 if (f->lsu_out[w] == 0) {
                     bar_arrive(s, w);
+                    if (w == f->cur_warp)
+                        sched_advance_barrier(s);
                     f->bar_pending[w] = 0;
                     wp->state = WS_BAR;
                     set_des(s, w, R_NONE);

@@ -227,7 +227,7 @@ typedef struct {
     int barrier[NWARPS];        /* 到达屏障 */
     int bar_count;
     int done[NWARPS];
-    int ptr;                    /* 2 位轮转指针 */
+        int cur_warp;               /* RUN_TO_DONE 当前独占 warp（ma_spec §2） */
     int bdone_sent;             /* block_done 已置位待消费 */
 } ws_t;
 

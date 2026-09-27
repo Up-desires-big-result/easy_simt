@@ -2,7 +2,7 @@
 
 版本：v0.1（规范文档，基线已冻结；v0.2 重构：宏观内容收拢至第 1 节，模块逐节成文）
 日期：2026-08-30
-修订记录：2026-08-25 分支处理改为**取指阻塞式**（原为"顺序流取指 + taken 冲刷"）：无预测无冲刷，预测+冲刷降为预留优化项；`stall_reason` 去除 `FLUSH`、新增 `BRSTALL`；`BR_PRED` 语义同步更新。2026-08-30 warp 调度策略改为**单 warp 独占、阻塞至完成**（原为按 warp id 顺序轮转交织）：在途至多一个 warp，停顿期整机阻塞不切换，仅 `bar.sync` 到达与 `ret` 结束回合；交织降为预留优化项，`WS_POLICY` 语义同步更新（§1.1、§1.3、§1.4、§1.6、§2）。`top/cmodel/ws.c` 暂保留旧轮转策略，随 ws 模块实现一并切换。2026-08-30 结构改进：§1.4 增设术语对照；§1.6 参数总表明确缩放规则与预留配置；§2–§11 增设信号级端口与模块级规范引用。一致性修正：§1.4、§2、§11 已取消的 sf→rf 写使能描述改与 intf_spec §1.8 一致（写使能随三源写回 `lane_mask` 随路）。其余内容定义不变。2026-09-02 rf 存储阵列由寄存器表改为 OpenRAM SRAM 宏实现（§10 补存储阵列说明）；模块外部端口与事务级语义不变。2026-09-12 架构调整：sf（SIMT Frontend）并入 ws（Warp Scheduler），模块总数 10→9——取指、译码、冒险检测、分化控制与 warp 调度同处 ws；原 ws↔sf 内部通道（`grant`/`stall_reason`/`barrier_arrive`）取消，改为模块内部状态；`bs_sf_launch` 并入 `bs_ws_launch`（单通道、载荷含 `{blockIdx,N,SHBASE}`）；原 `sf_*` 通道统一更名为 `ws_*`；§2/§3 合并，其后节号顺移。
+修订记录：2026-08-25 分支处理改为**取指阻塞式**（原为"顺序流取指 + taken 冲刷"）：无预测无冲刷，预测+冲刷降为预留优化项；`stall_reason` 去除 `FLUSH`、新增 `BRSTALL`；`BR_PRED` 语义同步更新。2026-08-30 warp 调度策略改为**单 warp 独占、阻塞至完成**（原为按 warp id 顺序轮转交织）：在途至多一个 warp，停顿期整机阻塞不切换，仅 `bar.sync` 到达与 `ret` 结束回合；交织降为预留优化项，`WS_POLICY` 语义同步更新（§1.1、§1.3、§1.4、§1.6、§2）。`top/cmodel/ws.c` 暂保留旧轮转策略，随 ws 模块实现一并切换。2026-08-30 结构改进：§1.4 增设术语对照；§1.6 参数总表明确缩放规则与预留配置；§2–§11 增设信号级端口与模块级规范引用。一致性修正：§1.4、§2、§11 已取消的 sf→rf 写使能描述改与 intf_spec §1.8 一致（写使能随三源写回 `lane_mask` 随路）。其余内容定义不变。2026-09-02 rf 存储阵列由寄存器表改为 OpenRAM SRAM 宏实现（§10 补存储阵列说明）；模块外部端口与事务级语义不变。2026-09-12 架构调整：sf（SIMT Frontend）并入 ws（Warp Scheduler），模块总数 10→9——取指、译码、冒险检测、分化控制与 warp 调度同处 ws；原 ws↔sf 内部通道（`grant`/`stall_reason`/`barrier_arrive`）取消，改为模块内部状态；`bs_sf_launch` 并入 `bs_ws_launch`（单通道、载荷含 `{blockIdx,N,SHBASE}`）；原 `sf_*` 通道统一更名为 `ws_*`；§2/§3 合并，其后节号顺移。2026-09-15 l1sm 交付：§8 冲突串行化措辞明确为按行组逐拍串行服务（l1sm_spec §1.4）；v1 SM 钉扎为复位时一次（幂等），cmodel `sim_block_start` 每块重钉保留（等价）；`top/cmodel/l1sm.c` 暂为逐 lane 串行服务，与本模块 bank 并行口径的边界事务序列一致，时序切换为待办；§8 指针行改指 l1sm_spec。2026-09-15 ws cmodel 调度切换为 §2 RUN_TO_DONE（单 warp 独占）：`cur_warp` 替换轮转指针，ret/`bar.sync` 到达推进、屏障释放回最小 id warp，黄金回归全 PASS（指令级统计不变；rounds 43007→65782，独占不交织所致）。
 适用范围：本文档定义 easy_simt SIMT 处理器的**顶层微架构**：模块划分、职责边界、模块间接口、调度与分化控制机制、存储子系统策略及参数总表。架构状态与指令语义见同目录 `isa_spec_v0.1.md`（ISA 规范），二者共同构成 RTL 实现与验证的依据。信号级端口定义见同目录 `intf_spec_v0.1.md`（接口规范）。
 
 ---
@@ -210,9 +210,9 @@ V3 与 32-lane 基线"全分化"的差异纯属粒度效应：8 lane 下部分 w
 
 **完成判定**：warp `ret` 置 DONE；4 warp 全 DONE 发 `block_done`。
 
-**接口**：收 `bs_ws_launch{block_idx,N,shbase}`（装载 `ld.param` 上下文、复位各 warp PC 与 SIMT 状态及调度状态）、`icache_ws_rsp{inst}`、`rf→ws 操作数`、`{ialu,falu,lsu}→ws wb_done`、`ialu_ws_br`、`lsu_ws_stall{warp_id,reason}`；发 `ws_icache_req{pc}`、`ws→rf 读口{rs1,rs2}`、`ws→{ialu,falu,lsu} issue`（lsu 另含 `shbase`；`bar.sync` 不下发执行单元，由 ws 直接计数）、`ws_bs_bdone{block_idx}`。原 `ws→rf 写使能` 已取消，写使能并入三源写回通道的 `lane_mask` 随路（intf_spec §1.8）。
+**接口**：收 `bs_ws_launch{block_idx,N,shbase}`（装载 `ld.param` 上下文、复位各 warp PC 与 SIMT 状态及调度状态）、`icache_ws_rsp{inst}`、`rf→ws 操作数`、`{ialu,falu,lsu}→ws wb_done`、`ialu_ws_br`、`lsu_ws_stall{warp_id,reason}`；发 `ws_icache_req{pc}`、`ws→rf 读口{rs1,rs2}`、`ws→{ialu,falu,lsu} issue`（lsu 另含 `shbase`；`bar.sync` 不下发执行单元，由 ws 直接计数）、`ws_bs_bdone{block_idx}`。原 `sf→rf 写使能` 已取消，写使能并入三源写回通道的 `lane_mask` 随路（intf_spec §1.8）。
 
-**信号级端口与模块级规范**：信号级端口见 intf_spec §2；模块级规范未成文，当前参考实现为 `top/cmodel/ws.c`（暂为旧轮转策略，随模块实现切换为 §2 调度策略）。
+**信号级端口与模块级规范**：信号级端口见 intf_spec §2；模块级规范见 `submodules/ws/docs/ws_spec_v0.1.md`（当前参考实现为 `top/cmodel/ws.c`，已切换为 §2 RUN_TO_DONE 调度策略）。
 
 ## 3. bs — Block Scheduler
 
@@ -274,13 +274,13 @@ V3 与 32-lane 基线"全分化"的差异纯属粒度效应：8 lane 下部分 w
 - **L1 侧（偏移索引、正常 tag）**：`n=U_LINES-SM_LINES`，`set=fn(addr) mod n`，物理行 = `SM_LINES+set`；命中条件 `class==L1 && valid && tag==addr_tag`。缺失阻塞、回填整行后以 `class=L1` 覆写分配（直接映射）。L1 索引空间整体偏移到 SM 区之上，**两套规约永不互相别名**，L1 替换永不触碰 SM 钉扎行。
 - **无脏位**：写直通、不写分配，tag 仅 `{class, valid, tag}` 三字段，保持最小。
 
-**8-bank 锁步访问**：接收 lsu 的 8-lane 请求后，若全部活跃 lane 落在**同一行**且 8 个 bank 互不冲突，则**单拍完成**（一次行级 tag 比较 + 8 bank 并行读/写）；若跨行或 bank 冲突，则整拍串行（停顿重发），属例外而非常态——不是逐 lane 串行的基线机制。黄金程序 stride-1 访问恒为单行、8 bank 无冲突，故每条访存指令单拍完成，与基线"无 bank conflict"一致。
+**8-bank 锁步访问**：接收 lsu 的 8-lane 请求后，若全部活跃 lane 落在**同一行**且 8 个 bank 互不冲突，则**单拍完成**（一次行级 tag 比较 + 8 bank 并行读/写）；若跨行或 bank 冲突，则按行组逐拍串行服务（每拍一个同行 bank 不重复的活跃 lane 组，lane 升序，l1sm_spec §1.4），属例外而非常态——不是逐 lane 串行的基线机制。黄金程序 stride-1 访问恒为单行、8 bank 无冲突，故每条访存指令单拍完成，与基线"无 bank conflict"一致。
 
 **特性**：直接映射；缺失阻塞；写直通不写分配；8-bank 锁步；`ld.global.nc` 提示位忽略，一律走缓存（不实现 bypass 路径）。
 
 **接口**：收 `lsu_l1sm_req{rw,sm,addr[8×32],wdata[8×32],mask[8]}`；发 `l1sm_lsu_rsp{rdata[8×32]}`（单行单拍；缺失阻塞至回填完成）、`l1sm_memif_req{addr}`；收 `memif_l1sm_rsp{line}`。
 
-**信号级端口与模块级规范**：信号级端口见 intf_spec §8；模块级规范未成文，当前参考实现为 `top/cmodel/l1sm.c`。
+**信号级端口与模块级规范**：信号级端口见 intf_spec §8；模块级规范见 `submodules/l1sm/docs/l1sm_spec_v0.1.md`。
 
 ## 9. memif — Memory Interface
 

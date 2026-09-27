@@ -137,9 +137,9 @@ easy_simt/
 
 单元内命名：`rtl/<单元名>.sv`、`tb/tb_<单元名>_vsim.cpp`、`docs/<单元名>_spec.md`，
 单元名与目录名一致。模块职责与接口见 `top/docs/ma_spec_v0.1.md` §1.4 与
-`intf_spec_v0.1.md`。当前 `bs`、`ialu`、`falu`、`lsu`、`icache`、`memif`、`rf` 的 spec / RTL / testbench
-三件套已备（其中 `rf` 的存储阵列为 OpenRAM SRAM 宏实现，见 `rf_spec`），
-其余模块待补。
+`intf_spec_v0.1.md`。当前 9 个模块（ws、bs、ialu、falu、lsu、icache、l1sm、memif、rf）
+的 spec / RTL / testbench 三件套已全部交付（其中 rf 的存储阵列为 OpenRAM
+SRAM 宏实现，见 rf_spec）。
 
 `top/` 兼作项目级工具目录：
 
