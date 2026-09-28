@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>easy_simt 指令级演示</title>
+<style>
+  :root{
+    --amber:#D97706; --blue:#2563EB; --violet:#7C3AED; --cyan:#0891B2;
+    --green:#16A34A; --red:#DC2626; --dark:#1E293B; --ink:#334155;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+       background:#F1F5F9;color:var(--ink)}
+  header{padding:12px 22px 4px}
+  header h1{font-size:19px;margin:0}
+  header p{font-size:12px;color:#64748B;margin:3px 0 0}
+  .wrap{display:flex;gap:14px;padding:12px 22px 24px;align-items:flex-start;flex-wrap:wrap}
+  .stage{flex:1 1 760px;min-width:720px;background:#fff;border:1px solid #E2E8F0;border-radius:10px;
+         box-shadow:0 1px 3px rgba(15,23,42,.06);position:relative;overflow:visible}
+  .stage svg{display:block;width:100%;height:auto}
+  .payload{position:absolute;z-index:5;transform:translate(-50%,-115%);pointer-events:none;
+           font-size:10.5px;font-family:Consolas,Menlo,monospace;color:#fff;
+           padding:2px 7px;border-radius:5px;white-space:nowrap;box-shadow:0 1px 4px rgba(15,23,42,.25)}
+  aside{flex:0 0 340px;min-width:300px;display:flex;flex-direction:column;gap:12px}
+  .card{background:#fff;border:1px solid #E2E8F0;border-radius:10px;
+        box-shadow:0 1px 3px rgba(15,23,42,.06);padding:12px 14px}
+  .ctrl{display:flex;align-items:center;gap:8px}
+  .ctrl button{border:1px solid #CBD5E1;background:#fff;border-radius:7px;padding:5px 12px;
+               font-size:13px;cursor:pointer;color:var(--ink)}
+  .ctrl button:hover{background:#F1F5F9}
+  .ctrl .play{background:#1E293B;color:#fff;border-color:#1E293B;width:64px}
+  .frameidx{font-size:12px;color:#64748B;margin-left:auto;font-family:Consolas,Menlo,monospace}
+  .progress{margin-top:10px;height:6px;background:#F1F5F9;border-radius:3px;position:relative;cursor:pointer}
+  .progress .fill{height:100%;background:#2563EB;border-radius:3px;width:0%}
+  .ticklist{display:flex;gap:2px;margin-top:6px}
+  .tick{flex:1;height:4px;border-radius:2px;background:#E2E8F0}
+  .tick.done{background:#93C5FD}
+  .tick.cur{background:#2563EB}
+  .step h2{font-size:14px;margin:0 0 2px;color:#0F172A}
+  .step .chname{font-size:11px;font-family:Consolas,Menlo,monospace;color:#2563EB;margin:0 0 6px;word-break:break-all}
+  .step .iinfo{font-size:11.5px;font-family:Consolas,Menlo,monospace;margin:0 0 6px;
+               background:#F8FAFC;border:1px solid #E2E8F0;border-radius:6px;padding:4px 8px;word-break:break-all}
+  .step .iinfo .hex{color:#7C3AED;font-weight:700}
+  .step .iinfo .asm{color:#0F172A;font-weight:700}
+  .step .iinfo .ptx{color:#94A3B8;font-size:10.5px}
+  .step p{font-size:12px;line-height:1.7;margin:6px 0 0}
+  .step .pl{font-size:11px;font-family:Consolas,Menlo,monospace;background:#F8FAFC;border:1px solid #E2E8F0;
+            border-radius:6px;padding:5px 8px;margin-top:7px;color:#334155;word-break:break-all}
+  .state h3{font-size:12px;color:#64748B;margin:0 0 6px;font-weight:600}
+  .ctx{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:11.5px;margin-bottom:8px}
+  .ctx .k{color:#94A3B8}
+  .ctx .v{font-family:Consolas,Menlo,monospace}
+  .regs{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px}
+  .reg{border:1px solid #E2E8F0;border-radius:6px;padding:3px 2px;text-align:center;min-width:0}
+  .reg .rn{font-size:9.5px;color:#94A3B8;font-family:Consolas,Menlo,monospace}
+  .reg .rv{font-size:9.5px;font-family:Consolas,Menlo,monospace;color:#0F172A;
+           word-break:break-all;line-height:1.25;margin-top:1px}
+  .reg.chg{border-color:#2563EB;background:#EFF6FF}
+  .reg.chg .rv{color:#1D4ED8;font-weight:700}
+  .stats{font-size:10.5px;color:#94A3B8;margin-top:8px}
+  .hint{font-size:11px;color:#94A3B8;margin-top:8px}
+  /* ---- svg ---- */
+  .blk{cursor:default}
+  svg.dimming .blk{opacity:.42}
+  svg.dimming .blk.hi{opacity:1}
+  .edge{visibility:hidden}
+  .edge.hi{visibility:visible}
+  .edge path{fill:none;stroke-width:2;opacity:.9}
+  .edge.hi path{stroke-width:2.6;stroke-dasharray:9 6;animation:dash .7s linear infinite}
+  @keyframes dash{to{stroke-dashoffset:-15}}
+  .bname{font-size:14px;font-weight:700;fill:#0F172A}
+  .bfull{font-size:9.5px;fill:#475569}
+  .brole{font-size:9.5px;fill:#64748B}
+  .die-t{font-size:11px;fill:#94A3B8;font-family:Consolas,Menlo,monospace}
+  .cell{fill:#EDF2F7;stroke:#D5DDE6;stroke-width:.6}
+  .cell.on{fill:#16A34A;stroke:#14532D}
+  .cellnum{font-size:11px;fill:#94A3B8;font-family:Consolas,Menlo,monospace}
+  .cellnum.on{fill:#F0FDF4}
+  .cellcap{font-size:8.5px;fill:#94A3B8;font-family:Consolas,Menlo,monospace}
+  .actline{font-size:9px;fill:#B45309;font-family:system-ui,"Segoe UI","Microsoft YaHei",sans-serif}
+  .actline[font-weight]{font-weight:600}
+  .memrow{font-size:8.6px;font-family:Consolas,Menlo,monospace;fill:#475569}
+  .memrow.lit{fill:#B91C1C;font-weight:700}
+  .imline{fill:#FEF9C3;opacity:0}
+  .imline.lit{opacity:1}
+  .lg-txt{font-size:10px;fill:#64748B}
+  .foot{font-size:10px;fill:#94A3B8}
+</style>
+</head>
+<body>
+<header>
+  <h1>easy_simt 指令级演示</h1>
+  <p>内核 shmem_diverge_kernel · N=1000 · WARPS=4 · LANES=8 · MEM_LAT=20 · grid=32 块 · 单 warp 独占、阻塞至完成</p>
+</header>
+
+<div class="wrap">
+<div class="stage" id="stagebox">
+<svg id="svg" viewBox="0 0 980 556" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="m-amber"  viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#D97706"/></marker>
+    <marker id="m-blue"   viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563EB"/></marker>
+    <marker id="m-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7C3AED"/></marker>
+    <marker id="m-cyan"   viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#0891B2"/></marker>
+    <marker id="m-green"  viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#16A34A"/></marker>
+    <marker id="m-red"    viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#DC2626"/></marker>
+    <marker id="m-dark"   viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1E293B"/></marker>
+  </defs>
+
+  <!-- core 边界（die） -->
+  <rect x="40" y="64" width="700" height="416" rx="10" fill="#FBFDFF" stroke="#B9C4D2" stroke-width="1.6"/>
+  <text class="die-t" x="52" y="82">easy_simt core</text>
+
+  <!-- ================= 模块（缩写 + 全名 + 简介 + 内部结构格） ================= -->
+  <g class="blk" data-mod="bs">
+    <rect x="64" y="96" width="132" height="108" rx="5" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.3"/>
+    <text class="bname" x="74" y="114">bs</text>
+    <text class="bfull" x="90" y="114">块调度</text>
+    <text class="brole" x="74" y="130">grid 32 块 · 单块串行驻留</text>
+    <text class="actline" id="act-bs" x="74" y="150"><tspan x="74"></tspan><tspan x="74" dy="14"></tspan><tspan x="74" dy="14"></tspan></text>
+    <g class="cells" data-mod="bs"></g>
+  </g>
+
+  <g class="blk" data-mod="ws">
+    <rect x="64" y="216" width="132" height="248" rx="5" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+    <text class="bname" x="74" y="234">ws</text>
+    <text class="bfull" x="92" y="234">SIMT 前端与调度</text>
+    <text class="brole" x="74" y="250">4warp · 栈4 · BRT 8</text>
+    <text class="actline" id="act-ws" x="74" y="270"><tspan x="74"></tspan><tspan x="74" dy="14"></tspan><tspan x="74" dy="14"></tspan><tspan x="74" dy="14"></tspan></text>
+    <g class="cells" data-mod="ws"></g>
+  </g>
+
+  <g class="blk" data-mod="icache">
+    <rect x="220" y="96" width="140" height="124" rx="5" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.3"/>
+    <text class="bname" x="230" y="114">icache</text>
+    <text class="bfull" x="286" y="114">指令缓存</text>
+    <text class="brole" x="230" y="130">16 条 cache line</text>
+    <text class="actline" id="act-icache" x="230" y="150"><tspan x="230"></tspan><tspan x="230" dy="14"></tspan><tspan x="230" dy="14"></tspan></text>
+    <g class="cells" data-mod="icache"></g>
+  </g>
+
+  <g class="blk" data-mod="rf">
+    <rect x="220" y="244" width="140" height="220" rx="5" fill="#F0FDF4" stroke="#16A34A" stroke-width="1.3"/>
+    <text class="bname" x="230" y="262">rf</text>
+    <text class="bfull" x="254" y="262">寄存器堆</text>
+    <text class="brole" x="230" y="278">32×8lane×4warp · R0 恒零</text>
+    <text class="actline" id="act-rf" x="230" y="298"><tspan x="230"></tspan><tspan x="230" dy="14"></tspan><tspan x="230" dy="14"></tspan><tspan x="230" dy="14"></tspan></text>
+    <g class="cells" data-mod="rf"></g>
+  </g>
+
+  <g class="blk" data-mod="ialu">
+    <rect x="384" y="96" width="150" height="118" rx="5" fill="#F5F3FF" stroke="#7C3AED" stroke-width="1.3"/>
+    <text class="bname" x="394" y="114">ialu</text>
+    <text class="bfull" x="426" y="114">整数运算 · 分支决议</text>
+    <text class="brole" x="394" y="130">8 lane</text>
+    <text class="actline" id="act-ialu" x="394" y="150"><tspan x="394"></tspan><tspan x="394" dy="14"></tspan><tspan x="394" dy="14"></tspan></text>
+    <g class="cells" data-mod="ialu"></g>
+  </g>
+
+  <g class="blk" data-mod="falu">
+    <rect x="384" y="226" width="150" height="118" rx="5" fill="#F5F3FF" stroke="#7C3AED" stroke-width="1.3"/>
+    <text class="bname" x="394" y="244">falu</text>
+    <text class="bfull" x="426" y="244">浮点运算</text>
+    <text class="brole" x="394" y="260">8 lane · FMUL/FADD/FNEG</text>
+    <text class="actline" id="act-falu" x="394" y="280"><tspan x="394"></tspan><tspan x="394" dy="14"></tspan><tspan x="394" dy="14"></tspan></text>
+    <g class="cells" data-mod="falu"></g>
+  </g>
+
+  <g class="blk" data-mod="lsu">
+    <rect x="384" y="356" width="150" height="108" rx="5" fill="#F5F3FF" stroke="#7C3AED" stroke-width="1.3"/>
+    <text class="bname" x="394" y="374">lsu</text>
+    <text class="bfull" x="420" y="374">装载/存储</text>
+    <text class="brole" x="394" y="390">8 lane · 全局+共享</text>
+    <text class="actline" id="act-lsu" x="394" y="410"><tspan x="394"></tspan><tspan x="394" dy="14"></tspan><tspan x="394" dy="14"></tspan></text>
+    <g class="cells" data-mod="lsu"></g>
+  </g>
+
+  <g class="blk" data-mod="memif">
+    <rect x="558" y="96" width="150" height="130" rx="5" fill="#FFF7ED" stroke="#D97706" stroke-width="1.3"/>
+    <text class="bname" x="568" y="114">memif</text>
+    <text class="bfull" x="612" y="114">AXI4 主接口</text>
+    <text class="brole" x="568" y="130">单在途事务 · icache 优先</text>
+    <text class="actline" id="act-memif" x="568" y="150"><tspan x="568"></tspan><tspan x="568" dy="14"></tspan><tspan x="568" dy="14"></tspan><tspan x="568" dy="14"></tspan></text>
+    <g class="cells" data-mod="memif"></g>
+  </g>
+
+  <g class="blk" data-mod="l1sm">
+    <rect x="558" y="238" width="150" height="226" rx="5" fill="#F0FDF4" stroke="#16A34A" stroke-width="1.3"/>
+    <text class="bname" x="568" y="256">l1sm</text>
+    <text class="bfull" x="606" y="256">L1 + 共享存储</text>
+    <text class="brole" x="568" y="272">8 bank 统一 SRAM</text>
+    <text class="actline" id="act-l1sm" x="568" y="292"><tspan x="568"></tspan><tspan x="568" dy="14"></tspan><tspan x="568" dy="14"></tspan><tspan x="568" dy="14"></tspan></text>
+    <g class="cells" data-mod="l1sm"></g>
+  </g>
+
+  <!-- 核外：指令段 + 数据段 -->
+  <g class="blk" data-mod="imem">
+    <rect x="790" y="96" width="150" height="160" rx="6" fill="#F8FAFC" stroke="#94A3B8" stroke-width="1.3" stroke-dasharray="5 4"/>
+    <text class="bname" x="800" y="113" font-size="12">指令段</text>
+    <text class="brole" x="856" y="113">IMEM</text>
+    <rect class="imline" id="imline" x="794" y="118" width="142" height="132" rx="3"/>
+    <text class="memrow" x="800" y="132" id="im-pc0">0 3C200000 LDP r1</text>
+    <text class="memrow" x="800" y="147" id="im-pc1">1 3C410000 LDP r2</text>
+    <text class="memrow" x="800" y="162" id="im-pc2">2 3C620000 LDP r3</text>
+    <text class="memrow" x="800" y="177" id="im-pc3">3 40810000 CSRR r4</text>
+    <text class="memrow" x="800" y="192" id="im-pc4">4 40A20000 CSRR r5</text>
+    <text class="memrow" x="800" y="207" id="im-pc5">5 40C00000 CSRR r6</text>
+    <text class="memrow" x="800" y="222" id="im-pc6">6 04E42980 IMAD r7</text>
+    <text class="memrow" x="800" y="237" id="im-pc7">7 08808000 IADD r4</text>
+  </g>
+  <g class="blk" data-mod="dmem">
+    <rect x="790" y="272" width="150" height="110" rx="6" fill="#F8FAFC" stroke="#94A3B8" stroke-width="1.3" stroke-dasharray="5 4"/>
+    <text class="bname" x="800" y="289" font-size="12">数据段</text>
+    <text class="brole" x="852" y="289">GMEM</text>
+    <text class="memrow" x="800" y="309">in[] @0x00100000 (N=1000)</text>
+    <text class="memrow" x="800" y="324">out[] @0x00200000 (N=1000)</text>
+    <text class="brole" x="800" y="346">片外延迟 MEM_LAT=20</text>
+    <text class="brole" x="800" y="360">由 AXI 从设备建模</text>
+  </g>
+
+  <!-- ================= 通道（无文字标签；仅当前帧/悬停时显示） ================= -->
+  <g class="edge" data-m="bs ws"><title>bs_ws_launch</title>
+    <path d="M130,204 V216" stroke="#D97706" marker-end="url(#m-amber)"/></g>
+  <g class="edge" data-m="bs ws"><title>ws_bs_bdone</title>
+    <path d="M180,216 V204" stroke="#D97706" marker-end="url(#m-amber)"/></g>
+
+  <g class="edge" data-m="ws icache"><title>ws_icache_req</title>
+    <path d="M196,258 H208 V150 H220" stroke="#2563EB" marker-end="url(#m-blue)"/></g>
+  <g class="edge" data-m="ws icache"><title>icache_ws_rsp</title>
+    <path d="M220,182 H208 V292 H196" stroke="#2563EB" marker-end="url(#m-blue)"/></g>
+
+  <g class="edge" data-m="ws ialu"><title>ws_ialu_issue</title>
+    <path d="M196,330 H208 V80 H440 V96" stroke="#7C3AED" marker-end="url(#m-violet)"/></g>
+  <g class="edge" data-m="ws ialu"><title>ialu_ws_br / ialu_ws_wbdone</title>
+    <path d="M470,96 V88 H208 V360 H196" stroke="#0891B2" marker-end="url(#m-cyan)"/></g>
+
+  <g class="edge" data-m="ws falu"><title>ws_falu_issue</title>
+    <path d="M196,232 H372 V300 H384" stroke="#7C3AED" marker-end="url(#m-violet)"/></g>
+  <g class="edge" data-m="ws falu"><title>falu_ws_wbdone</title>
+    <path d="M384,330 H364 V420 H360" stroke="#0891B2" marker-end="url(#m-cyan)"/></g>
+
+  <g class="edge" data-m="ws lsu"><title>ws_lsu_issue</title>
+    <path d="M170,464 V488 H450 V464" stroke="#7C3AED" marker-end="url(#m-violet)"/></g>
+  <g class="edge" data-m="ws lsu"><title>lsu_ws_stall / lsu_ws_wbdone</title>
+    <path d="M420,464 V500 H160 V464" stroke="#0891B2" marker-end="url(#m-cyan)"/></g>
+
+  <g class="edge" data-m="ws rf"><title>ws_rf_rd</title>
+    <path d="M196,340 H220" stroke="#16A34A" marker-end="url(#m-green)"/></g>
+  <g class="edge" data-m="ws rf"><title>rf_ws_rddata</title>
+    <path d="M220,370 H196" stroke="#16A34A" marker-end="url(#m-green)"/></g>
+
+  <g class="edge" data-m="ialu rf"><title>ialu_rf_wb</title>
+    <path d="M384,180 H370 V390 H360" stroke="#16A34A" marker-end="url(#m-green)"/></g>
+  <g class="edge" data-m="falu rf"><title>falu_rf_wb</title>
+    <path d="M384,330 H364 V420 H360" stroke="#16A34A" marker-end="url(#m-green)"/></g>
+  <g class="edge" data-m="lsu rf"><title>lsu_rf_wb</title>
+    <path d="M384,380 H378 V445 H360" stroke="#16A34A" marker-end="url(#m-green)"/></g>
+
+  <g class="edge" data-m="lsu l1sm"><title>lsu_l1sm_req</title>
+    <path d="M534,420 H558" stroke="#DC2626" marker-end="url(#m-red)"/></g>
+  <g class="edge" data-m="lsu l1sm"><title>l1sm_lsu_rsp</title>
+    <path d="M558,450 H534" stroke="#DC2626" marker-end="url(#m-red)"/></g>
+
+  <g class="edge" data-m="icache memif"><title>icache_memif_req</title>
+    <path d="M300,96 V78 H600 V96" stroke="#DC2626" marker-end="url(#m-red)"/></g>
+  <g class="edge" data-m="icache memif"><title>memif_icache_rsp</title>
+    <path d="M630,96 V92 H330 V96" stroke="#DC2626" marker-end="url(#m-red)"/></g>
+
+  <g class="edge" data-m="l1sm memif"><title>l1sm_memif_req</title>
+    <path d="M600,238 V226" stroke="#DC2626" marker-end="url(#m-red)"/></g>
+  <g class="edge" data-m="l1sm memif"><title>memif_l1sm_rsp</title>
+    <path d="M660,226 V238" stroke="#DC2626" marker-end="url(#m-red)"/></g>
+
+  <g class="edge" data-m="memif ext"><title>AXI4（AW/W/B/AR/R 五通道）</title>
+    <path d="M708,170 H790" stroke="#1E293B" marker-end="url(#m-dark)"/></g>
+
+  <!-- 图例 -->
+  <g>
+    <rect x="40"  y="512" width="20" height="4" rx="2" fill="#D97706"/><text class="lg-txt" x="64"  y="518">块调度</text>
+    <rect x="110" y="512" width="20" height="4" rx="2" fill="#2563EB"/><text class="lg-txt" x="134" y="518">取指</text>
+    <rect x="170" y="512" width="20" height="4" rx="2" fill="#7C3AED"/><text class="lg-txt" x="194" y="518">发射</text>
+    <rect x="230" y="512" width="20" height="4" rx="2" fill="#0891B2"/><text class="lg-txt" x="254" y="518">决议/写回完成</text>
+    <rect x="340" y="512" width="20" height="4" rx="2" fill="#16A34A"/><text class="lg-txt" x="364" y="518">寄存器读/写回</text>
+    <rect x="450" y="512" width="20" height="4" rx="2" fill="#DC2626"/><text class="lg-txt" x="474" y="518">访存</text>
+    <rect x="510" y="512" width="20" height="4" rx="2" fill="#1E293B"/><text class="lg-txt" x="534" y="518">AXI4 对外</text>
+    <rect x="610" y="509" width="9" height="9" rx="2" class="cell on"/><text class="lg-txt" x="624" y="518">active lane/bank/warp</text>
+  </g>
+</svg>
+</div>
+
+<aside>
+  <div class="card">
+    <div class="ctrl">
+      <button id="btnPrev">◀ 上一帧</button>
+      <button id="btnPlay" class="play">▶ 播放</button>
+      <button id="btnNext">下一帧 ▶</button>
+      <span class="frameidx" id="frameidx">1 / 14</span>
+    </div>
+    <div class="progress" id="progress"><div class="fill" id="pfill"></div></div>
+    <div class="ticklist" id="ticklist"></div>
+    <p class="hint">键盘 ← / → 逐帧；点击进度条跳转。样例仅含块 0 前 4 条指令（pc1、2 合并）。</p>
+  </div>
+  <div class="card step">
+    <h2 id="steptitle"></h2>
+    <p class="chname" id="stepch"></p>
+    <p class="iinfo" id="iinfo"></p>
+    <p id="stepdesc"></p>
+    <div class="pl" id="steppl"></div>
+  </div>
+  <div class="card state">
+    <h3>在途 warp 上下文（块 0 · warp 0）</h3>
+    <div class="ctx">
+      <span class="k">PC</span><span class="v" id="stPC">—</span>
+      <span class="k">active mask</span><span class="v" style="display:flex;gap:3px" id="stMask"></span>
+      <span class="k">分化栈</span><span class="v" id="stDiv">空</span>
+      <span class="k">记分板</span><span class="v" id="stSB">空</span>
+    </div>
+    <h3>寄存器（warp 0 · 8 lane 同值）</h3>
+    <div class="regs" id="regs"></div>
+    <p class="stats" id="stats"></p>
+  </div>
+</aside>
+</div>
+
+<script>
+/* ================= 指令窗口（真实装配结果） ================= */
+const IWIN = [
+  {pc:0, hex:"3C200000", asm:"LDP r1, #0",        ptx:"ld.param.u64 %rd1, [param_0]"},
+  {pc:1, hex:"3C410000", asm:"LDP r2, #1",        ptx:"ld.param.u64 %rd2, [param_1]", skip:true},
+  {pc:2, hex:"3C620000", asm:"LDP r3, #2",        ptx:"ld.param.u32 %r3, [param_2]", skip:true},
+  {pc:3, hex:"40810000", asm:"CSRR r4, %ntid.x",  ptx:"mov.u32 %r4, %ntid.x"},
+  {pc:4, hex:"40A20000", asm:"CSRR r5, %ctaid.x", ptx:"mov.u32 %r5, %ctaid.x"},
+  {pc:5, hex:"40C00000", asm:"CSRR r6, %tid.x",   ptx:"mov.u32 %r1, %tid.x"},
+  {pc:6, hex:"04E42980", asm:"IMAD r7, r4, r5, r6", ptx:"mad.lo.s32 %r2, %r4, %r5, %r1"},
+  {pc:7, hex:"08808000", asm:"IADD r4, r0, #0",   ptx:"mov.f32 %f23, 0f00000000"}
+];
+
+/* ================= 帧（每帧 = 一次模块间流动；正文 = 本指令中各 block 做了什么） =================
+   act：模块内小格点位图（ialu/falu/lsu=lane，rf/l1sm=bank，ws=warp，bs=块，icache=行，memif=在途槽）
+   ba：块上动作行（随帧更新显示在块顶部） */
+const FRAMES = [
+  { title:"块下发", ch:"bs → ws",
+    desc:"块下发（程序起点）：块 0 驻留 core，warp 0 独占进入在途，PC 从 0 开始取指。",
+    pl:"block_idx=0 · n=32 · shbase=0",
+    mods:["bs","ws"], edges:[["bs_ws_launch","block_idx=0 · n=32 · shbase=0"]],
+    ba:{bs:["下发块 0 → ws","n=32（4warp×8lane）","grid 32 块 · 串行驻留"],
+        ws:["接收块 0","warp 0 进入在途（独占）","PC=0 · mask=0xFF"]},
+    act:{bs:1, ws:1}, st:{pc:0, sb:[], regs:{}}, cur:0 },
+
+  { title:"取指请求（缺失）", ch:"ws → icache",
+    desc:"LDP r1, #0：从参数区装载参数 0——in 数组基址 0x00100000，广播至 8 lane 写入 r1。无寄存器源，经 ialu 直通路径写回。",
+    pl:"pc=0",
+    mods:["ws","icache"], edges:[["ws_icache_req","pc=0"]],
+    ba:{ws:["PC=0 发出取指请求","阻塞等待 · 记 IMISS"],
+        icache:["查行 0：tag 不匹配","缺失 · 等待回填"]},
+    act:{ws:1}, st:{pc:0, sb:[], regs:{}}, cur:0 },
+
+  { title:"回填请求", ch:"icache → memif",
+    desc:"LDP r1, #0：从参数区装载参数 0——in 数组基址 0x00100000，广播至 8 lane 写入 r1。无寄存器源，经 ialu 直通路径写回。",
+    pl:"addr=0x0（行对齐）",
+    mods:["icache","memif"], edges:[["icache_memif_req","addr=0x0"]],
+    ba:{icache:["向 memif 请求回填行 0","addr=0x0（行对齐）"],
+        memif:["占用单在途事务槽","准备发 AXI 读"]},
+    act:{memif:1}, st:{pc:0, sb:[], regs:{}}, cur:0 },
+
+  { title:"AXI 读地址（AR）", ch:"memif → 指令段",
+    desc:"LDP r1, #0：从参数区装载参数 0——in 数组基址 0x00100000，广播至 8 lane 写入 r1。无寄存器源，经 ialu 直通路径写回。",
+    pl:"araddr=0x0 · arlen=0 · arsize=32B/拍",
+    mods:["memif","imem"], edges:[["AXI4（AW/W/B/AR/R 五通道）","AR: araddr=0x0"]],
+    ba:{memif:["AXI AR：araddr=0x0","单拍整行 · 32B/拍"]},
+    act:{memif:1}, st:{pc:0, sb:[], regs:{}}, cur:0 },
+
+  { title:"AXI 读数据（R）", ch:"指令段 → memif",
+    desc:"LDP r1, #0：从参数区装载参数 0——in 数组基址 0x00100000，广播至 8 lane 写入 r1。无寄存器源，经 ialu 直通路径写回。",
+    pl:"rdata=行0（pc0..pc7）· rresp=OKAY",
+    mods:["imem","memif"], edges:[["AXI4（AW/W/B/AR/R 五通道）","R: 行0 数据"]],
+    ba:{memif:["接收 R 数据：行 0","pc0..pc7 八条指令 · 256b"]},
+    act:{memif:1}, st:{pc:0, sb:[], regs:{}}, cur:0, imemLit:true },
+
+  { title:"回填数据", ch:"memif → icache",
+    desc:"LDP r1, #0：从参数区装载参数 0——in 数组基址 0x00100000，广播至 8 lane 写入 r1。无寄存器源，经 ialu 直通路径写回。",
+    pl:"data=256b（行 0）",
+    mods:["memif","icache"], edges:[["memif_icache_rsp","data=行0"]],
+    ba:{icache:["行 0 写入 · 置有效位","缺失解除"],
+        memif:["在途槽释放"]},
+    act:{icache:1}, st:{pc:0, sb:[], regs:{}}, cur:0, imemLit:true },
+
+  { title:"取指返回（命中）", ch:"icache → ws",
+    desc:"LDP r1, #0：从参数区装载参数 0——in 数组基址 0x00100000，广播至 8 lane 写入 r1。无寄存器源，经 ialu 直通路径写回。",
+    pl:"inst=0x3C200000",
+    mods:["icache","ws"], edges:[["icache_ws_rsp","inst=0x3C200000"]],
+    ba:{icache:["命中 · 返回指令字","0x3C200000"],
+        ws:["译码：LDP r1, #0","读口 0 · 不发 rf 读"]},
+    act:{icache:1, ws:1}, st:{pc:0, sb:[], regs:{}}, cur:0 },
+
+  { title:"发射至 ialu", ch:"ws → ialu",
+    desc:"LDP r1, #0：从参数区装载参数 0——in 数组基址 0x00100000，广播至 8 lane 写入 r1。无寄存器源，经 ialu 直通路径写回。",
+    pl:"LDP · rd=r1 · opa=0x00100000×8",
+    mods:["ws","ialu"], edges:[["ws_ialu_issue","LDP · rd=r1 · opa=0x00100000×8"]],
+    ba:{ws:["广播 params[0] 进 opa","发射 LDP → ialu"],
+        ialu:["接收发射包","8 lane 直通路径"]},
+    act:{ws:1, ialu:255}, st:{pc:0, sb:["r1"], regs:{}}, cur:0 },
+
+  { title:"写回 + 完成", ch:"ialu → rf / ws",
+    desc:"LDP r1, #0：从参数区装载参数 0——in 数组基址 0x00100000，广播至 8 lane 写入 r1。无寄存器源，经 ialu 直通路径写回。",
+    pl:"r1 ← 0x00100000 · lane_mask=0xFF",
+    mods:["ialu","rf","ws"], edges:[["ialu_rf_wb","r1 ← 0x00100000"],["ialu_ws_br / ialu_ws_wbdone","wbdone(r1)"]],
+    ba:{ialu:["写回 r1 ← 0x00100000","上报 wbdone(r1)"],
+        rf:["bank 写入 r1","lane_mask=0xFF 门控"],
+        ws:["记分板清 r1","PC→1"]},
+    act:{ialu:255, rf:255}, st:{pc:1, sb:[], regs:{r1:0x00100000}}, cur:0, chg:["r1"] },
+
+  { title:"pc=1、2（LDP r2/r3，合并帧）", ch:"（演示合并）",
+    desc:"LDP r2, #1 / LDP r3, #2：装载参数 1（out 数组基址 0x00200000）与参数 2（线程总数 n=1000）写入 r2、r3。",
+    pl:"r2 ← 0x00200000 · r3 ← 1000（0x3E8）",
+    mods:["icache","ws","ialu","rf"], edges:[["icache_ws_rsp","inst=0x3C410000 / 0x3C620000"]],
+    ba:{icache:["行 0 命中 pc=1 / pc=2"],
+        ws:["连续发射 LDP ×2 → ialu"],
+        ialu:["直通 8 lane"],
+        rf:["写入 r2 ← 0x00200000","写入 r3 ← 1000"]},
+    act:{ialu:255, rf:255, icache:1}, st:{pc:3, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8}}, cur:3, chg:["r2","r3"] },
+
+  { title:"取指请求（命中）", ch:"ws → icache",
+    desc:"CSRR r4, %ntid.x：读特殊寄存器 ntid.x（每块线程数 4×8=32）广播至 8 lane 写入 r4。",
+    pl:"pc=3",
+    mods:["ws","icache"], edges:[["ws_icache_req","pc=3"]],
+    ba:{ws:["PC=3 发出取指请求"],
+        icache:["行 0 命中（pc3 同行）"]},
+    act:{ws:1, icache:1}, st:{pc:3, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8}}, cur:3 },
+
+  { title:"取指返回", ch:"icache → ws",
+    desc:"CSRR r4, %ntid.x：读特殊寄存器 ntid.x（每块线程数 4×8=32）广播至 8 lane 写入 r4。",
+    pl:"inst=0x40810000",
+    mods:["icache","ws"], edges:[["icache_ws_rsp","inst=0x40810000"]],
+    ba:{icache:["一拍返回指令字","0x40810000"],
+        ws:["译码：CSRR r4, %ntid.x"]},
+    act:{icache:1, ws:1}, st:{pc:3, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8}}, cur:3 },
+
+  { title:"发射至 ialu", ch:"ws → ialu",
+    desc:"CSRR r4, %ntid.x：读特殊寄存器 ntid.x（每块线程数 4×8=32）广播至 8 lane 写入 r4。",
+    pl:"CSRR · rd=r4 · opa=32×8",
+    mods:["ws","ialu"], edges:[["ws_ialu_issue","CSRR · rd=r4 · opa=32×8"]],
+    ba:{ws:["广播 ntid.x=32 进 opa","发射 CSRR → ialu"],
+        ialu:["接收发射包","8 lane 直通路径"]},
+    act:{ws:1, ialu:255}, st:{pc:3, sb:["r4"], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8}}, cur:3 },
+
+  { title:"写回 + 完成", ch:"ialu → rf / ws",
+    desc:"CSRR r4, %ntid.x：读特殊寄存器 ntid.x（每块线程数 4×8=32）广播至 8 lane 写入 r4。",
+    pl:"r4 ← 32 · lane_mask=0xFF",
+    mods:["ialu","rf","ws"], edges:[["ialu_rf_wb","r4 ← 32"],["ialu_ws_br / ialu_ws_wbdone","wbdone(r4)"]],
+    ba:{ialu:["写回 r4 ← 32","上报 wbdone(r4)"],
+        rf:["bank 写入 r4","lane_mask=0xFF 门控"],
+        ws:["记分板清 r4","PC→4"]},
+    act:{ialu:255, rf:255}, st:{pc:4, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20}}, cur:3, chg:["r4"] }
+];
+
+/* ================= 模块内小格阵列 ================= */
+const CELLS = {
+  bs:    {n:32, cols:16, x:74,  y:186, s:5,  g:1},
+  ws:    {n:4,  cols:4,  x:74,  y:350, s:13, g:6},
+  icache:{n:16, cols:8,  x:230, y:192, s:7,  g:2},
+  rf:    {n:8,  cols:4,  x:232, y:356, s:11, g:4},
+  ialu:  {n:8,  cols:8,  x:394, y:196, s:9,  g:2},
+  falu:  {n:8,  cols:8,  x:394, y:324, s:9,  g:2},
+  lsu:   {n:8,  cols:8,  x:394, y:450, s:8,  g:2},
+  memif: {n:1,  cols:1,  x:568, y:206, s:12, g:0},
+  l1sm:  {n:8,  cols:4,  x:568, y:350, s:11, g:4}
+};
+
+const svg = document.getElementById("svg");
+const stagebox = document.getElementById("stagebox");
+const blocks = [...svg.querySelectorAll(".blk")];
+const edges  = [...svg.querySelectorAll(".edge")];
+const edgeByTitle = {};
+edges.forEach(e => { edgeByTitle[e.querySelector("title").textContent] = e; });
+
+const NS = "http://www.w3.org/2000/svg";
+const cellEls = {};   /* mod -> [{rect,text},...] */
+for (const [mod, c] of Object.entries(CELLS)) {
+  const g = svg.querySelector(`.cells[data-mod="${mod}"]`);
+  const arr = [];
+  for (let i = 0; i < c.n; i++) {
+    const col = i % c.cols, row = Math.floor(i / c.cols);
+    const cx = c.x + col * (c.s + c.g), cy = c.y + row * (c.s + c.g);
+    const r = document.createElementNS(NS, "rect");
+    r.setAttribute("class", "cell");
+    r.setAttribute("x", cx); r.setAttribute("y", cy);
+    r.setAttribute("width", c.s); r.setAttribute("height", c.s);
+    if (c.v) r.setAttribute("rx", 4);
+    g.appendChild(r);
+    let t = null;
+    if (c.num) {
+      t = document.createElementNS(NS, "text");
+      t.setAttribute("class", "cellnum");
+      t.setAttribute("x", cx + c.s/2); t.setAttribute("y", cy + c.s/2 + 4);
+      t.setAttribute("text-anchor", "middle");
+      t.textContent = i;
+      g.appendChild(t);
+    }
+    arr.push({r, t});
+  }
+  cellEls[mod] = arr;
+}
+
+const $ = id => document.getElementById(id);
+const hex = v => "0x" + v.toString(16).toUpperCase().padStart(8,"0");
+
+/* 进度 tick */
+FRAMES.forEach((f, i) => {
+  const t = document.createElement("div");
+  t.className = "tick"; t.id = "tick" + i;
+  $("ticklist").appendChild(t);
+});
+/* 寄存器格 */
+const REGN = ["r0","r1","r2","r3","r4","r5","r6","r7","r8","r9","r10","r11"];
+REGN.forEach(r => {
+  const d = document.createElement("div");
+  d.className = "reg"; d.id = "reg-" + r;
+  d.innerHTML = `<div class="rn">${r}</div><div class="rv">—</div>`;
+  $("regs").appendChild(d);
+});
+/* mask 格 */
+for (let l = 0; l < 8; l++) {
+  const d = document.createElement("div");
+  d.className = "lane"; d.textContent = l;
+  $("stMask").appendChild(d);
+}
+
+let cur = 0, playing = null;
+
+function bubble(edge, text, color) {
+  const p = edge.querySelector("path");
+  const r = p.getBoundingClientRect(), sr = stagebox.getBoundingClientRect();
+  const div = document.createElement("div");
+  div.className = "payload";
+  div.style.left = (r.left + r.width/2 - sr.left) + "px";
+  div.style.top  = (r.top  - sr.top) + "px";
+  if (color) div.style.background = color;
+  div.innerHTML = text;
+  stagebox.appendChild(div);
+}
+function clearBubbles() { stagebox.querySelectorAll(".payload").forEach(p => p.remove()); }
+
+function setCells(act) {
+  for (const [mod, arr] of Object.entries(cellEls)) {
+    const bits = (act && act[mod]) || 0;
+    arr.forEach(({r, t}, i) => {
+      const on = (bits >> i) & 1;
+      r.classList.toggle("on", !!on);
+      if (t) t.classList.toggle("on", !!on);
+    });
+  }
+}
+
+function render(i) {
+  const f = FRAMES[i];
+  svg.classList.add("dimming");
+  edges.forEach(e => e.classList.remove("hi"));
+  blocks.forEach(b => b.classList.remove("hi"));
+  const lit = new Set(f.mods);
+  f.edges.forEach(([t]) => {
+    const e = edgeByTitle[t];
+    if (e) { e.classList.add("hi"); e.dataset.m.split(" ").forEach(m => lit.add(m)); }
+  });
+  Object.keys(f.act || {}).forEach(m => lit.add(m));
+  blocks.forEach(b => b.classList.toggle("hi", lit.has(b.dataset.mod)));
+
+  setCells(f.act);
+
+  /* 块内动作描述（多行 tspan）：参与帧的块显示其动作，其余清空 */
+  ["bs","ws","icache","rf","ialu","falu","lsu","memif","l1sm"].forEach(m => {
+    const arr = (f.ba && f.ba[m]) || [];
+    $("act-"+m).querySelectorAll("tspan").forEach((t, i) => t.textContent = arr[i] || "");
+  });
+
+  clearBubbles();
+  f.edges.forEach(([t, pl]) => {
+    const e = edgeByTitle[t];
+    if (e) bubble(e, pl, e.querySelector("path").getAttribute("stroke"));
+  });
+
+  $("imline").classList.toggle("lit", !!f.imemLit);
+  for (let p = 0; p < 8; p++) $("im-pc"+p).classList.toggle("lit", !!f.imemLit || f.cur === p);
+
+  const wi = IWIN.find(w => w.pc === f.cur);
+  $("iinfo").innerHTML =
+    `<span class="hex">${wi.hex}</span> <span class="asm">pc ${wi.pc}：${wi.asm}</span> <span class="ptx">${wi.ptx}</span>`;
+
+  $("steptitle").textContent = `帧 ${i+1} · ${f.title}`;
+  $("stepch").textContent = f.ch;
+  $("stepdesc").textContent = f.desc;
+  $("steppl").innerHTML = f.pl;
+
+  $("stPC").textContent = f.st.pc;
+  $("stSB").textContent = f.st.sb.length ? f.st.sb.join(" ") + " 待写回" : "空";
+  [...$("stMask").children].forEach(d => d.classList.remove("off"));
+  REGN.forEach(r => {
+    const cell = $("reg-"+r).querySelector(".rv");
+    const v = f.st.regs[r];
+    if (r === "r0") { cell.innerHTML = "0x0000_<br>0000"; cell.title = "R0 恒零"; $("reg-"+r).classList.remove("chg"); return; }
+    cell.innerHTML = v === undefined ? "—" :
+      "0x" + v.toString(16).toUpperCase().padStart(8,"0").slice(0,4) + "_<br>" +
+      v.toString(16).toUpperCase().padStart(8,"0").slice(4);
+    cell.title = v === undefined ? "" : r + " = " + v;
+    $("reg-"+r).classList.toggle("chg", !!(f.chg && f.chg.includes(r)));
+  });
+  const nFetch = i >= 10 ? 4 : i >= 9 ? 3 : i >= 1 ? 1 : 0;
+  const nIssue = i >= 12 ? 4 : i >= 9 ? 3 : i >= 7 ? 1 : 0;
+  $("stats").textContent = `演示内计数：取指请求 ${nFetch} 次 · 回填 1 次 · 发射 ${nIssue} 条`;
+
+  $("frameidx").textContent = `${i+1} / ${FRAMES.length}`;
+  $("pfill").style.width = ((i+1)/FRAMES.length*100) + "%";
+  FRAMES.forEach((_, j) => {
+    $("tick"+j).classList.toggle("cur", j === i);
+    $("tick"+j).classList.toggle("done", j < i);
+  });
+  cur = i;
+}
+
+function goto(i) { render(Math.max(0, Math.min(FRAMES.length-1, i))); }
+function step(d) { stopPlay(); goto(cur + d); }
+function stopPlay() { if (playing) { clearInterval(playing); playing = null; $("btnPlay").textContent = "▶ 播放"; } }
+function togglePlay() {
+  if (playing) return stopPlay();
+  if (cur >= FRAMES.length-1) goto(0);
+  $("btnPlay").textContent = "⏸ 暂停";
+  playing = setInterval(() => { if (cur >= FRAMES.length-1) stopPlay(); else goto(cur+1); }, 1800);
+}
+
+$("btnPrev").onclick = () => step(-1);
+$("btnNext").onclick = () => step(1);
+$("btnPlay").onclick = togglePlay;
+$("progress").onclick = ev => {
+  stopPlay();
+  const r = ev.currentTarget.getBoundingClientRect();
+  goto(Math.floor((ev.clientX - r.left) / r.width * FRAMES.length));
+};
+document.addEventListener("keydown", ev => {
+  if (ev.key === "ArrowLeft") step(-1);
+  else if (ev.key === "ArrowRight") step(1);
+});
+
+render(0);
+</script>
+</body>
+</html>
