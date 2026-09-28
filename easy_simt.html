@@ -451,7 +451,40 @@ const FRAMES = [
     ba:{ialu:["写回 r4 ← 32","上报 wbdone(r4)"],
         rf:["bank 写入 r4","lane_mask=0xFF 门控"],
         ws:["记分板清 r4","PC→4"]},
-    act:{ialu:255, rf:255}, st:{pc:4, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20}}, cur:3, chg:["r4"] }
+    act:{ialu:255, rf:255}, st:{pc:4, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20}}, cur:3, chg:["r4"] },
+
+  { title:"取指请求（命中）", ch:"ws → icache",
+    desc:"CSRR r5, %ctaid.x：读特殊寄存器 ctaid.x（当前块号，块 0 为 0）广播至 8 lane 写入 r5。",
+    pl:"pc=4",
+    mods:["ws","icache"], edges:[["ws_icache_req","pc=4"]],
+    ba:{ws:["PC=4 发出取指请求"],
+        icache:["行 0 命中（pc4 同行）"]},
+    act:{ws:1, icache:1}, st:{pc:4, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20}}, cur:4 },
+
+  { title:"取指返回", ch:"icache → ws",
+    desc:"CSRR r5, %ctaid.x：读特殊寄存器 ctaid.x（当前块号，块 0 为 0）广播至 8 lane 写入 r5。",
+    pl:"inst=0x40A20000",
+    mods:["icache","ws"], edges:[["icache_ws_rsp","inst=0x40A20000"]],
+    ba:{icache:["一拍返回指令字","0x40A20000"],
+        ws:["译码：CSRR r5, %ctaid.x"]},
+    act:{icache:1, ws:1}, st:{pc:4, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20}}, cur:4 },
+
+  { title:"发射至 ialu", ch:"ws → ialu",
+    desc:"CSRR r5, %ctaid.x：读特殊寄存器 ctaid.x（当前块号，块 0 为 0）广播至 8 lane 写入 r5。",
+    pl:"CSRR · rd=r5 · opa=0×8",
+    mods:["ws","ialu"], edges:[["ws_ialu_issue","CSRR · rd=r5 · opa=0×8"]],
+    ba:{ws:["广播 ctaid.x=0 进 opa","发射 CSRR → ialu"],
+        ialu:["接收发射包","8 lane 直通路径"]},
+    act:{ws:1, ialu:255}, st:{pc:4, sb:["r5"], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20}}, cur:4 },
+
+  { title:"写回 + 完成", ch:"ialu → rf / ws",
+    desc:"CSRR r5, %ctaid.x：读特殊寄存器 ctaid.x（当前块号，块 0 为 0）广播至 8 lane 写入 r5。",
+    pl:"r5 ← 0 · lane_mask=0xFF",
+    mods:["ialu","rf","ws"], edges:[["ialu_rf_wb","r5 ← 0"],["ialu_ws_br / ialu_ws_wbdone","wbdone(r5)"]],
+    ba:{ialu:["写回 r5 ← 0","上报 wbdone(r5)"],
+        rf:["bank 写入 r5","lane_mask=0xFF 门控"],
+        ws:["记分板清 r5","PC→5"]},
+    act:{ialu:255, rf:255}, st:{pc:5, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0}}, cur:4, chg:["r5"] }
 ];
 
 /* ================= 模块内小格阵列 ================= */
