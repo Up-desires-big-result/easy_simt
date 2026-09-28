@@ -12,7 +12,7 @@
 #  已实现：C 事务级模型（top/cmodel/）编译与黄金回归（make cmodel [run]）；
 #          内核镜像自 top/kernel/*.cu 全链生成（make kernel）；
 #          SRAM 宏单元生成（OpenRAM，make sram，产物落 tmp/sram/）；
-#          RTL 仿真与门级仿真（Verilator 单路线，make rtl/netlist [run|gui] <模块>）；
+#          RTL 仿真与门级仿真（Verilator 单路线，make rtl/netlist run <模块>）；
 #          门级综合（Yosys + nangate45，make syn <模块>）
 #
 #  内核单一源：top/kernel 只存 CUDA 源码 easy_simt_kernel.cu；
@@ -31,11 +31,9 @@
 #    make sram              生成项目所需的全部 SRAM 宏（OpenRAM，产物落 tmp/sram/）
 #    make rtl <模块>        RTL 仿真编译（Verilator 编译 RTL + C++ harness）
 #    make rtl run <模块>    RTL 仿真执行（对 C 参考模型事务级比对，判据 VSIM PASS）
-#    make rtl gui <模块>    RTL 仿真执行并拉起 gtkwave 看 VCD
 #    make syn <模块>        门级综合（Yosys + nangate45，需 PDK_ROOT，产物落 tmp/syn/<模块>/）
 #    make netlist <模块>    门级仿真编译（网表 + 单元行为模型 + harness，Verilator）
 #    make netlist run <模块> 门级仿真执行（对 C 参考模型事务级比对）
-#    make netlist gui <模块> 门级仿真执行并拉起 gtkwave 看 VCD
 #    make help              查看全部目标
 #    make clean             清空 tmp/
 #
@@ -97,22 +95,16 @@ BIN       := $(BUILD)/easy_simt_sim
 MOD := $(filter $(MODULES),$(MAKECMDGOALS))
 # 子命令：make cmodel run / make rtl run bs 中的 run 仅为标记，命中则编译后继续执行
 RUN_IT := $(filter run,$(MAKECMDGOALS))
-# 子命令：make rtl gui bs / make netlist gui bs 中的 gui：执行仿真（Verilator
-# 原生转储 VCD）并拉起 gtkwave 查看
-GUI_IT := $(filter gui,$(MAKECMDGOALS))
 
 .PHONY: all cmodel kernel sram sim_run clean deps help \
         syn netlist rtl \
-        $(MODULES) run gui
+        $(MODULES) run
 
 # 允许模块名单独作为目标出现（供 $(MOD) 抓取），本身不做任何事
 $(MODULES): ;
 
 # run 作为 cmodel/rtl/netlist 的子命令出现（供 $(RUN_IT) 抓取），本身不做任何事
 run: ;
-
-# gui 作为 rtl/netlist 的子命令出现（供 $(GUI_IT) 抓取），本身不做任何事
-gui: ;
 
 all: cmodel
 
@@ -213,8 +205,6 @@ sram:
 #    make rtl run <模块>   编译并执行；harness tb_<模块>_vsim.cpp 驱动时钟与
 #                          消费者决策，参考侧直链 top/cmodel（bs_step），
 #                          记分板逐笔比对；判据：日志出现 VSIM PASS
-#    make rtl gui <模块>   执行后拉起 gtkwave 查看原生转储的 VCD
-#                          （<模块>.vcd，落 $(RTL_DIR)/<模块>/）
 # ===========================================================================
 RTL_DIR  := $(TMP)/rtl
 
@@ -253,14 +243,8 @@ rtl:
 	    $(addprefix $(CURDIR)/,$(CORE_SRCS)) \
 	    -CFLAGS "-I$(CURDIR)/$(SIM_DIR)" || exit 1; \
 	  $(MAKE) -C . -f V$(MOD).mk CXX=g++-9 CC=gcc-9 LINK=g++-9 || exit 1; \
-	  if [ -n "$(RUN_IT)" ] || [ -n "$(GUI_IT)" ]; then \
+	  if [ -n "$(RUN_IT)" ]; then \
 	    ./vsim_$(MOD) || exit 1; \
-	  fi; \
-	  if [ -n "$(GUI_IT)" ]; then \
-	    if [ -x $(CURDIR)/third_party/oss-cad-suite/bin/gtkwave ]; then \
-	      GW="$(CURDIR)/third_party/oss-cad-suite/bin/gtkwave"; else GW=gtkwave; fi; \
-	    echo "拉起 gtkwave：$(MOD).vcd（日志：gtkwave.log）"; \
-	    nohup $$GW $(MOD).vcd >gtkwave.log 2>&1 & \
 	  fi; \
 	fi
 
@@ -357,7 +341,6 @@ syn:
 #  门级仿真（Verilator）：
 #    make netlist <模块>      仅编译（网表 + 单元行为模型 + harness）
 #    make netlist run <模块>  编译并执行，对 C 参考模型事务级比对，判据 VSIM PASS
-#    make netlist gui <模块>  执行后拉起 gtkwave 查看 VCD
 #  网表取 $(SYN_DIR)/<模块>/<模块>_netlist.v（缺失自动先 make syn <模块>）；
 #  单元行为模型由 yosys 从 liberty 现场生成，落 $(NETLIST_DIR)/cells_sim.v
 #  （仓库不存单元模型）。
@@ -408,14 +391,8 @@ netlist:
 	    $(addprefix $(CURDIR)/,$(CORE_SRCS)) \
 	    -CFLAGS "-I$(CURDIR)/$(SIM_DIR)" || exit 1; \
 	  $(MAKE) -C . -f V$(MOD).mk CXX=g++-9 CC=gcc-9 LINK=g++-9 || exit 1; \
-	  if [ -n "$(RUN_IT)" ] || [ -n "$(GUI_IT)" ]; then \
+	  if [ -n "$(RUN_IT)" ]; then \
 	    ./vsim_$(MOD) || exit 1; \
-	  fi; \
-	  if [ -n "$(GUI_IT)" ]; then \
-	    if [ -x $(CURDIR)/third_party/oss-cad-suite/bin/gtkwave ]; then \
-	      GW="$(CURDIR)/third_party/oss-cad-suite/bin/gtkwave"; else GW=gtkwave; fi; \
-	    echo "拉起 gtkwave：$(MOD).vcd（日志：gtkwave.log）"; \
-	    nohup $$GW $(MOD).vcd >gtkwave.log 2>&1 & \
 	  fi; \
 	fi
 
@@ -483,10 +460,8 @@ help:
 	@echo "  sram             生成项目所需 SRAM 宏（OpenRAM，产物落 tmp/sram/）"
 	@echo "  rtl <模块>       RTL 仿真编译"
 	@echo "  rtl run <模块>   RTL 仿真执行（对 C 参考模型事务级比对）"
-	@echo "  rtl gui <模块>   RTL 仿真执行并看波形"
 	@echo "  syn <模块>       门级综合"
 	@echo "  netlist <模块>   门级仿真编译"
 	@echo "  netlist run <模块> 门级仿真执行（对 C 参考模型事务级比对）"
-	@echo "  netlist gui <模块> 门级仿真执行并看波形"
 	@echo "  deps             安装第三方依赖"
 	@echo "  clean            清空 tmp/"

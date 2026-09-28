@@ -174,7 +174,7 @@ source setup.sh
 依赖：make、支持 C99 的 gcc；生成内核镜像另需 nvcc（CUDA）与 python3；
 生成 SRAM 宏单元另需 OpenRAM（`make deps` 就位，运行依赖 python3 及
 numpy、scipy、scikit-learn、joblib，见「SRAM 宏单元生成器（OpenRAM）」）；
-仿真为 Verilator、波形查看为 gtkwave、综合为 Yosys（三者均出自 oss-cad-suite，
+仿真为 Verilator、综合为 Yosys（均出自 oss-cad-suite，
 `make deps` 已随 third_party/ 就位）。
 
 ```
@@ -184,11 +184,9 @@ make kernel             # 生成内核镜像
 make sram               # 生成项目所需 SRAM 宏（产物落 tmp/sram/）
 make rtl <模块>         # RTL 仿真编译
 make rtl run <模块>     # RTL 仿真执行（对 C 参考模型事务级比对）
-make rtl gui <模块>     # RTL 仿真执行并看波形
 make syn <模块>         # 门级综合
 make netlist <模块>     # 门级仿真编译
 make netlist run <模块> # 门级仿真执行（对 C 参考模型事务级比对）
-make netlist gui <模块> # 门级仿真执行并看波形
 make clean              # 清空 tmp/
 make help               # 列出全部目标
 ```
