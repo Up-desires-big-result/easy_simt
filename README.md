@@ -112,12 +112,12 @@ easy_simt/
 │   ├── assembler/           easy_simt_assembler.py / easy_simt_assembler_verify.py
 │   ├── cmodel/              事务级 C 参考模型（*.c + sim_common.h；Verilator harness 直链作参考）
 │   ├── kernel/              easy_simt_kernel.cu（内核单一源）
-│   └── rtl/  tb/            顶层互连 RTL 与 testbench（预留）
+│   └── rtl/                 顶层互连 RTL easy_simt_top.sv
 └── submodules/              9 个硬件子模块，与 top/ 同级
     └── <子模块>/  × 9       每个镜像 docs/ + rtl/ + tb/
-        ├── docs/            单元规范 <单元名>_spec.md（bs/ialu/falu/lsu/icache/memif/rf 已备，其余待补）
-        ├── rtl/             单元 RTL <单元名>.sv（bs/ialu/falu/lsu/icache/memif/rf 已备，其余待补）
-        └── tb/              单元 testbench tb_<单元名>_vsim.cpp（C++ harness，bs/ialu/falu/lsu/icache/memif/rf 已备，其余待补）
+        ├── docs/            单元规范 <单元名>_spec.md
+        ├── rtl/             单元 RTL <单元名>.sv
+        └── tb/              单元 testbench tb_<单元名>_vsim.cpp（C++ harness）
 ```
 
 子模块位于 `submodules/` 下，与 `top/` 同级，各含 `docs/` + `rtl/` + `tb/`。
@@ -155,7 +155,7 @@ SRAM 宏实现，见 rf_spec）。
   作为仿真参考（同一份源码亦跑独立黄金回归）
 - `top/kernel/` —— 仅存 CUDA 源码 `easy_simt_kernel.cu`（内核单一源）；
   `.ptx/.hex/.json/.lst` 不入库，由 `make kernel` 现场生成到 `tmp/kernel/`
-- `top/rtl/`、`top/tb/` —— 顶层互连单元的 RTL 与 testbench（预留）
+- `top/rtl/` —— 顶层互连单元 RTL `easy_simt_top.sv`
 
 ## 使用
 
@@ -192,12 +192,6 @@ make netlist gui <模块> # 门级仿真执行并看波形
 make clean              # 清空 tmp/
 make help               # 列出全部目标
 ```
-
-预留目标（均只跑顶层，待顶层 RTL 落地）：`area`（顶层综合面积）、`wave`
-（门级仿真波形，供 `power` 使用）、`power`（网表+波形跑功耗）、`perf`
-（kernel 跑完的 cycle 数）。依赖链：`area <- syn top`；`wave <- syn top` 的
-网表 + 门级 tb；`power <- syn top` 的网表 + `wave` 的波形；`perf <- 内核镜像 +
-顶层 rtl/tb`。
 
 回归参数可覆盖，默认为 ma_spec §1.7 的 easy_simt 硬件口径：
 

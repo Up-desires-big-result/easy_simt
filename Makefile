@@ -14,8 +14,6 @@
 #          SRAM 宏单元生成（OpenRAM，make sram，产物落 tmp/sram/）；
 #          RTL 仿真与门级仿真（Verilator 单路线，make rtl/netlist [run|gui] <模块>）；
 #          门级综合（Yosys + nangate45，make syn <模块>）
-#  预留（均只跑顶层）：面积、门级仿真波形（供 power 使用）、功耗（网表+波形）、
-#          性能（顶层 kernel 完成 cycle 数）
 #
 #  内核单一源：top/kernel 只存 CUDA 源码 easy_simt_kernel.cu；
 #    .ptx/.hex/.json/.lst 一律由本 Makefile 现场生成到 tmp/kernel/，不入库：
@@ -38,10 +36,8 @@
 #    make netlist <模块>    门级仿真编译（网表 + 单元行为模型 + harness，Verilator）
 #    make netlist run <模块> 门级仿真执行（对 C 参考模型事务级比对）
 #    make netlist gui <模块> 门级仿真执行并拉起 gtkwave 看 VCD
-#    make help              查看全部目标（含预留）
+#    make help              查看全部目标
 #    make clean             清空 tmp/
-#    预留（均只跑顶层）：make area（顶层综合面积）/ make wave（门级仿真波形，供 power 使用）/
-#          make power（顶层功耗）/ make perf（顶层 kernel 完成 cycle 数）
 #
 # =============================================================================
 
@@ -106,7 +102,7 @@ RUN_IT := $(filter run,$(MAKECMDGOALS))
 GUI_IT := $(filter gui,$(MAKECMDGOALS))
 
 .PHONY: all cmodel kernel sram sim_run clean deps help \
-        syn netlist area wave power perf rtl \
+        syn netlist rtl \
         $(MODULES) run gui
 
 # 允许模块名单独作为目标出现（供 $(MOD) 抓取），本身不做任何事
@@ -424,39 +420,6 @@ netlist:
 	fi
 
 # ===========================================================================
-#  【预留】面积 / 波形 / 功耗 / 性能（均只跑顶层，实现时产物统一落 tmp/ 下）
-#  依赖链（实现时按此接入）：
-#    area  <- syn top（顶层综合，依赖顶层 RTL）
-#    wave  <- syn top 的网表 + 门级 testbench（跑门级仿真出波形）
-#    power <- syn top 的网表 + wave 的波形（网表+波形跑功耗报告）
-#    perf  <- 内核镜像（kernel）+ 顶层 rtl/tb（顶层仿真统计完成 cycle 数）
-# ===========================================================================
-
-# 面积：make area，只跑顶层：打印顶层综合报告的面积
-area:
-	@echo "[预留] area：顶层面积需顶层综合（make syn top，依赖顶层 RTL），尚未实现。"
-	@echo "        实现后：打印顶层综合报告（单元数 / 芯片面积 / 时序占比），报告落 $(SYN_DIR)/top/。"
-	@exit 1
-
-# 波形：make wave，只跑顶层：跑门级仿真生成波形，供 power 功耗分析使用
-wave:
-	@echo "[预留] wave：门级仿真波形需顶层综合后门级网表（先 make syn top）与门级 testbench，尚未实现。"
-	@echo "        实现后：跑门级仿真出波形（VCD），产物落 $(TMP)/wave/，供 power 功耗分析使用。"
-	@exit 1
-
-# 功耗：make power，只跑顶层，需综合后门级网表 + wave 生成的门级仿真波形
-power:
-	@echo "[预留] power：功耗需顶层综合后门级网表（先 make syn top）与门级仿真波形（先 make wave），尚未实现。"
-	@echo "        实现后：顶层网表 + 波形跑功耗出报告，产物落 $(TMP)/power/。"
-	@exit 1
-
-# 性能：make perf，只跑顶层：从第一个块下发到所有块结束，即同一 kernel 跑完的 cycle 数
-perf:
-	@echo "[预留] perf：kernel 跑完的 cycle 数（第一个块下发到所有块结束），需顶层 rtl + tb 与内核镜像（先 make kernel），尚未实现。"
-	@echo "        实现后：顶层仿真统计完成 cycle 数，报告落 $(TMP)/perf/。"
-	@exit 1
-
-# ===========================================================================
 #  第三方依赖（third_party/，内容不入库，.gitignore 忽略）
 #    make deps：一键拉取 GPGPU-Sim、OpenROAD-flow-scripts（仅 nangate45
 #    平台）与 OpenRAM（SRAM 宏单元生成器，自带 FreePDK45 工艺），安装
@@ -527,9 +490,3 @@ help:
 	@echo "  netlist gui <模块> 门级仿真执行并看波形"
 	@echo "  deps             安装第三方依赖"
 	@echo "  clean            清空 tmp/"
-	@echo ""
-	@echo "预留（未实现，均只跑顶层）："
-	@echo "  area             顶层综合面积（单元数 / 芯片面积 / 时序占比）"
-	@echo "  wave             门级仿真波形（供 power 使用）"
-	@echo "  power            网表+波形跑功耗"
-	@echo "  perf             kernel 跑完的 cycle 数（第一个块下发到所有块结束）"
