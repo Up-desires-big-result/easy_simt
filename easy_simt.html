@@ -580,7 +580,48 @@ const FRAMES = [
     ba:{ialu:["写回 r7 ← 0..7（逐 lane）","上报 wbdone(r7)"],
         rf:["bank 写入 r7（逐 lane 值）","lane_mask=0xFF 门控"],
         ws:["记分板清 r7","PC→7"]},
-    act:{ialu:255, rf:255}, st:{pc:7, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:6, chg:["r7"] }
+    act:{ialu:255, rf:255}, st:{pc:7, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:6, chg:["r7"] },
+
+  { title:"取指请求（命中）", ch:"ws → icache",
+    desc:"IADD r4, r0, #0：整数加法（立即数型）——r0 恒零加 0，r4 清零（PTX mov.f32 零初始化映射，覆盖原 ntid=32）。",
+    pl:"pc=7",
+    mods:["ws","icache"], edges:[["ws_icache_req","pc=7"]],
+    ba:{ws:["PC=7 发出取指请求"],
+        icache:["行 0 命中（pc7 同行）"]},
+    act:{ws:1, icache:1}, st:{pc:7, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:7 },
+
+  { title:"取指返回", ch:"icache → ws",
+    desc:"IADD r4, r0, #0：整数加法（立即数型）——r0 恒零加 0，r4 清零（PTX mov.f32 零初始化映射，覆盖原 ntid=32）。",
+    pl:"inst=0x08808000",
+    mods:["icache","ws"], edges:[["icache_ws_rsp","inst=0x08808000"]],
+    ba:{icache:["一拍返回指令字","0x08808000"],
+        ws:["译码：IADD r4, r0, #0","mode=1 立即数 · 读口规划：一阶段"]},
+    act:{icache:1, ws:1}, st:{pc:7, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:7 },
+
+  { title:"读操作数", ch:"ws ↔ rf",
+    desc:"IADD r4, r0, #0：整数加法（立即数型）——r0 恒零加 0，r4 清零（PTX mov.f32 零初始化映射，覆盖原 ntid=32）。",
+    pl:"rs1=r0 → a=0×8（rs2 域=0：立即数源不走读口）",
+    mods:["ws","rf"], edges:[["ws_rf_rd","rs1=r0"],["rf_ws_rddata","a=0×8"]],
+    ba:{ws:["一阶段读：r0","接收 a 存操作数寄存器"],
+        rf:["读口返回 r0","a=0（恒零）"]},
+    act:{ws:1, rf:255}, st:{pc:7, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:7 },
+
+  { title:"发射至 ialu", ch:"ws → ialu",
+    desc:"IADD r4, r0, #0：整数加法（立即数型）——r0 恒零加 0，r4 清零（PTX mov.f32 零初始化映射，覆盖原 ntid=32）。",
+    pl:"IADD · rd=r4 · a=0×8 · b=imm 0×8",
+    mods:["ws","ialu"], edges:[["ws_ialu_issue","IADD · rd=r4 · a/b 向量"]],
+    ba:{ws:["opb 取立即数 0 广播","发射 IADD → ialu","记分板登记 r4"],
+        ialu:["接收发射包","每 lane：a+b"]},
+    act:{ws:1, ialu:255}, st:{pc:7, sb:["r4"], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:7 },
+
+  { title:"写回 + 完成", ch:"ialu → rf / ws",
+    desc:"IADD r4, r0, #0：整数加法（立即数型）——r0 恒零加 0，r4 清零（PTX mov.f32 零初始化映射，覆盖原 ntid=32）。",
+    pl:"r4 ← 0+0 = 0 · lane_mask=0xFF",
+    mods:["ialu","rf","ws"], edges:[["ialu_rf_wb","r4 ← 0"],["ialu_ws_br / ialu_ws_wbdone","wbdone(r4)"]],
+    ba:{ialu:["写回 r4 ← 0","上报 wbdone(r4)"],
+        rf:["bank 写入 r4","lane_mask=0xFF 门控"],
+        ws:["记分板清 r4","PC→8"]},
+    act:{ialu:255, rf:255}, st:{pc:8, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:7, chg:["r4"] }
 ];
 
 /* 演示内计数（随帧预累计）：取指请求 / 回填 / 发射；合并帧按 2 计 */
