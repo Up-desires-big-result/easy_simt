@@ -531,7 +531,56 @@ const FRAMES = [
     ba:{ialu:["写回 r6 ← tid（逐 lane）","上报 wbdone(r6)"],
         rf:["bank 写入 r6（逐 lane 值）","lane_mask=0xFF 门控"],
         ws:["记分板清 r6","PC→6"]},
-    act:{ialu:255, rf:255}, st:{pc:6, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0, r6:[0,1,2,3,4,5,6,7]}}, cur:5, chg:["r6"] }
+    act:{ialu:255, rf:255}, st:{pc:6, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0, r6:[0,1,2,3,4,5,6,7]}}, cur:5, chg:["r6"] },
+
+  { title:"取指请求（命中）", ch:"ws → icache",
+    desc:"IMAD r7, r4, r5, r6：有符号乘加——每 lane 计算 r4×r5+r6 = 32×0+tid = 0..7 写入 r7。三寄存器源，经读口分两阶段取操作数。",
+    pl:"pc=6",
+    mods:["ws","icache"], edges:[["ws_icache_req","pc=6"]],
+    ba:{ws:["PC=6 发出取指请求"],
+        icache:["行 0 命中（pc6 同行）"]},
+    act:{ws:1, icache:1}, st:{pc:6, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0, r6:[0,1,2,3,4,5,6,7]}}, cur:6 },
+
+  { title:"取指返回", ch:"icache → ws",
+    desc:"IMAD r7, r4, r5, r6：有符号乘加——每 lane 计算 r4×r5+r6 = 32×0+tid = 0..7 写入 r7。三寄存器源，经读口分两阶段取操作数。",
+    pl:"inst=0x04E42980",
+    mods:["icache","ws"], edges:[["icache_ws_rsp","inst=0x04E42980"]],
+    ba:{icache:["一拍返回指令字","0x04E42980"],
+        ws:["译码：IMAD r7, r4, r5, r6","读口规划：两阶段（r4/r5 → r6）"]},
+    act:{icache:1, ws:1}, st:{pc:6, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0, r6:[0,1,2,3,4,5,6,7]}}, cur:6 },
+
+  { title:"读操作数 · 阶段 1", ch:"ws ↔ rf",
+    desc:"IMAD r7, r4, r5, r6：有符号乘加——每 lane 计算 r4×r5+r6 = 32×0+tid = 0..7 写入 r7。三寄存器源，经读口分两阶段取操作数。",
+    pl:"rs1=r4 · rs2=r5 → a=32×8 · b=0×8",
+    mods:["ws","rf"], edges:[["ws_rf_rd","rs1=r4 · rs2=r5"],["rf_ws_rddata","a=32×8 · b=0×8"]],
+    ba:{ws:["第一阶段读：r4、r5","接收 a/b 存操作数寄存器"],
+        rf:["双读口读 r4、r5","返回向量 a=32 · b=0"]},
+    act:{ws:1, rf:255}, st:{pc:6, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0, r6:[0,1,2,3,4,5,6,7]}}, cur:6 },
+
+  { title:"读操作数 · 阶段 2", ch:"ws ↔ rf",
+    desc:"IMAD r7, r4, r5, r6：有符号乘加——每 lane 计算 r4×r5+r6 = 32×0+tid = 0..7 写入 r7。三寄存器源，经读口分两阶段取操作数。",
+    pl:"rs1=r6 → c=tid 0..7",
+    mods:["ws","rf"], edges:[["ws_rf_rd","rs1=r6"],["rf_ws_rddata","c=tid 0..7"]],
+    ba:{ws:["第二阶段读：r6","接收 c 存操作数寄存器"],
+        rf:["读口返回 r6","c=0..7（逐 lane）"]},
+    act:{ws:1, rf:255}, st:{pc:6, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0, r6:[0,1,2,3,4,5,6,7]}}, cur:6 },
+
+  { title:"发射至 ialu", ch:"ws → ialu",
+    desc:"IMAD r7, r4, r5, r6：有符号乘加——每 lane 计算 r4×r5+r6 = 32×0+tid = 0..7 写入 r7。三寄存器源，经读口分两阶段取操作数。",
+    pl:"IMAD · rd=r7 · a=32×8 · b=0×8 · c=0..7",
+    mods:["ws","ialu"], edges:[["ws_ialu_issue","IMAD · rd=r7 · a/b/c 向量"]],
+    ba:{ws:["携带 a/b/c 发射 IMAD → ialu","记分板登记 r7"],
+        ialu:["接收发射包","每 lane：a×b+c"]},
+    act:{ws:1, ialu:255}, st:{pc:6, sb:["r7"], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0, r6:[0,1,2,3,4,5,6,7]}}, cur:6 },
+
+  { title:"写回 + 完成", ch:"ialu → rf / ws",
+    desc:"IMAD r7, r4, r5, r6：有符号乘加——每 lane 计算 r4×r5+r6 = 32×0+tid = 0..7 写入 r7。三寄存器源，经读口分两阶段取操作数。",
+    pl:"r7 ← 32×0+tid = 0..7（逐 lane）· lane_mask=0xFF",
+    mods:["ialu","rf","ws"], edges:[["ialu_rf_wb","r7 ← 32×0+tid"],["ialu_ws_br / ialu_ws_wbdone","wbdone(r7)"]],
+    ba:{ialu:["写回 r7 ← 0..7（逐 lane）","上报 wbdone(r7)"],
+        rf:["bank 写入 r7（逐 lane 值）","lane_mask=0xFF 门控"],
+        ws:["记分板清 r7","PC→7"]},
+    act:{ialu:255, rf:255}, st:{pc:7, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:6, chg:["r7"] }
 ];
 
 /* 演示内计数（随帧预累计）：取指请求 / 回填 / 发射；合并帧按 2 计 */
