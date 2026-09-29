@@ -58,6 +58,16 @@
            word-break:break-all;line-height:1.25;margin-top:1px}
   .reg.chg{border-color:#2563EB;background:#EFF6FF}
   .reg.chg .rv{color:#1D4ED8;font-weight:700}
+  .reg .rv.plv{color:#B45309;font-weight:700}
+  .plwrap{margin-top:8px}
+  .plwrap .plhd{font-size:12px;color:#64748B;margin:0 0 6px;font-weight:600}
+  .pltab{display:grid;grid-template-columns:auto repeat(8,minmax(0,1fr));gap:2px;
+         font-family:Consolas,Menlo,monospace;font-size:9px}
+  .pltab .h{color:#94A3B8;text-align:center}
+  .pltab .rn{color:#64748B;align-self:center}
+  .pltab .c{border:1px solid #E2E8F0;border-radius:4px;text-align:center;padding:2px 0;
+            color:#0F172A;line-height:1.2;min-width:0}
+  .pltab .c.chg{border-color:#2563EB;background:#EFF6FF;color:#1D4ED8;font-weight:700}
   .stats{font-size:10.5px;color:#94A3B8;margin-top:8px}
   .hint{font-size:11px;color:#94A3B8;margin-top:8px}
   /* ---- svg ---- */
@@ -298,7 +308,7 @@
     </div>
     <div class="progress" id="progress"><div class="fill" id="pfill"></div></div>
     <div class="ticklist" id="ticklist"></div>
-    <p class="hint">键盘 ← / → 逐帧；点击进度条跳转。样例仅含块 0 前 4 条指令（pc1、2 合并）。</p>
+    <p class="hint">键盘 ← / → 逐帧；点击进度条跳转。样例含块 0 前段指令（pc1、2 合并）。</p>
   </div>
   <div class="card step">
     <h2 id="steptitle"></h2>
@@ -315,8 +325,12 @@
       <span class="k">分化栈</span><span class="v" id="stDiv">空</span>
       <span class="k">记分板</span><span class="v" id="stSB">空</span>
     </div>
-    <h3>寄存器（warp 0 · 8 lane 同值）</h3>
+    <h3 id="regtitle">寄存器（warp 0 · 8 lane 同值）</h3>
     <div class="regs" id="regs"></div>
+    <div class="plwrap" id="plwrap" hidden>
+      <div class="plhd">逐 lane 值（warp 0 · 32 位 hex）</div>
+      <div class="pltab" id="pltab"></div>
+    </div>
     <p class="stats" id="stats"></p>
   </div>
 </aside>
@@ -484,8 +498,53 @@ const FRAMES = [
     ba:{ialu:["写回 r5 ← 0","上报 wbdone(r5)"],
         rf:["bank 写入 r5","lane_mask=0xFF 门控"],
         ws:["记分板清 r5","PC→5"]},
-    act:{ialu:255, rf:255}, st:{pc:5, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0}}, cur:4, chg:["r5"] }
+    act:{ialu:255, rf:255}, st:{pc:5, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0}}, cur:4, chg:["r5"] },
+
+  { title:"取指请求（命中）", ch:"ws → icache",
+    desc:"CSRR r6, %tid.x：读特殊寄存器 tid.x（块内线程号 = warp_id × 8 + lane），warp 0 各 lane 写入 0..7。",
+    pl:"pc=5",
+    mods:["ws","icache"], edges:[["ws_icache_req","pc=5"]],
+    ba:{ws:["PC=5 发出取指请求"],
+        icache:["行 0 命中（pc5 同行）"]},
+    act:{ws:1, icache:1}, st:{pc:5, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0}}, cur:5 },
+
+  { title:"取指返回", ch:"icache → ws",
+    desc:"CSRR r6, %tid.x：读特殊寄存器 tid.x（块内线程号 = warp_id × 8 + lane），warp 0 各 lane 写入 0..7。",
+    pl:"inst=0x40C00000",
+    mods:["icache","ws"], edges:[["icache_ws_rsp","inst=0x40C00000"]],
+    ba:{icache:["一拍返回指令字","0x40C00000"],
+        ws:["译码：CSRR r6, %tid.x"]},
+    act:{icache:1, ws:1}, st:{pc:5, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0}}, cur:5 },
+
+  { title:"发射至 ialu", ch:"ws → ialu",
+    desc:"CSRR r6, %tid.x：读特殊寄存器 tid.x（块内线程号 = warp_id × 8 + lane），warp 0 各 lane 写入 0..7。",
+    pl:"CSRR · rd=r6 · opa=tid[0..7]",
+    mods:["ws","ialu"], edges:[["ws_ialu_issue","CSRR · rd=r6 · opa=tid[0..7]"]],
+    ba:{ws:["逐 lane 构造 tid 0..7 进 opa","发射 CSRR → ialu"],
+        ialu:["接收发射包","8 lane 直通路径"]},
+    act:{ws:1, ialu:255}, st:{pc:5, sb:["r6"], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0}}, cur:5 },
+
+  { title:"写回 + 完成", ch:"ialu → rf / ws",
+    desc:"CSRR r6, %tid.x：读特殊寄存器 tid.x（块内线程号 = warp_id × 8 + lane），warp 0 各 lane 写入 0..7。",
+    pl:"r6 ← 0..7（逐 lane）· lane_mask=0xFF",
+    mods:["ialu","rf","ws"], edges:[["ialu_rf_wb","r6 ← tid 0..7"],["ialu_ws_br / ialu_ws_wbdone","wbdone(r6)"]],
+    ba:{ialu:["写回 r6 ← tid（逐 lane）","上报 wbdone(r6)"],
+        rf:["bank 写入 r6（逐 lane 值）","lane_mask=0xFF 门控"],
+        ws:["记分板清 r6","PC→6"]},
+    act:{ialu:255, rf:255}, st:{pc:6, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x20, r5:0x0, r6:[0,1,2,3,4,5,6,7]}}, cur:5, chg:["r6"] }
 ];
+
+/* 演示内计数（随帧预累计）：取指请求 / 回填 / 发射；合并帧按 2 计 */
+const CNT = FRAMES.reduce((acc, fr) => {
+  const prev = acc.length ? acc[acc.length-1] : {f:0, r:0, i:0};
+  const merged = /合并/.test(fr.title);
+  acc.push({
+    f: prev.f + (fr.edges.some(e => e[0] === "ws_icache_req") ? 1 : merged ? 2 : 0),
+    r: prev.r + (fr.edges.some(e => e[0] === "icache_memif_req") ? 1 : 0),
+    i: prev.i + (fr.edges.some(e => e[0] === "ws_ialu_issue") ? 1 : merged ? 2 : 0)
+  });
+  return acc;
+}, []);
 
 /* ================= 模块内小格阵列 ================= */
 const CELLS = {
@@ -631,15 +690,34 @@ function render(i) {
     const cell = $("reg-"+r).querySelector(".rv");
     const v = f.st.regs[r];
     if (r === "r0") { cell.innerHTML = "0x0000_<br>0000"; cell.title = "R0 恒零"; $("reg-"+r).classList.remove("chg"); return; }
-    cell.innerHTML = v === undefined ? "—" :
-      "0x" + v.toString(16).toUpperCase().padStart(8,"0").slice(0,4) + "_<br>" +
-      v.toString(16).toUpperCase().padStart(8,"0").slice(4);
-    cell.title = v === undefined ? "" : r + " = " + v;
+    if (Array.isArray(v)) {                       /* per-lane 值：格内摘要 + 展开表全值 */
+      const consec = v.every((x, k) => k === 0 || x === v[k-1] + 1);
+      cell.innerHTML = consec ? (v[0] + ".." + v[v.length-1]) : "逐 lane";
+      cell.title = r + " = [" + v.join(", ") + "]";
+    } else {
+      cell.innerHTML = v === undefined ? "—" :
+        "0x" + v.toString(16).toUpperCase().padStart(8,"0").slice(0,4) + "_<br>" +
+        v.toString(16).toUpperCase().padStart(8,"0").slice(4);
+      cell.title = v === undefined ? "" : r + " = " + v;
+    }
     $("reg-"+r).classList.toggle("chg", !!(f.chg && f.chg.includes(r)));
   });
-  const nFetch = i >= 10 ? 4 : i >= 9 ? 3 : i >= 1 ? 1 : 0;
-  const nIssue = i >= 12 ? 4 : i >= 9 ? 3 : i >= 7 ? 1 : 0;
-  $("stats").textContent = `演示内计数：取指请求 ${nFetch} 次 · 回填 1 次 · 发射 ${nIssue} 条`;
+  /* per-lane 展开表：本帧存在逐 lane 寄存器时显示 */
+  const plRegs = REGN.filter(r => Array.isArray(f.st.regs[r]));
+  $("plwrap").hidden = !plRegs.length;
+  $("regtitle").textContent = plRegs.length ? "寄存器（warp 0 · 含逐 lane 值）"
+                                             : "寄存器（warp 0 · 8 lane 同值）";
+  if (plRegs.length) {
+    let h = '<span class="h"></span>' + [...Array(8)].map((_, l) => `<span class="h">${l}</span>`).join("");
+    for (const r of plRegs)
+      h += `<span class="rn">${r}</span>` + f.st.regs[r].map(v => {
+        const s = v.toString(16).toUpperCase().padStart(8,"0");
+        return `<span class="c${f.chg && f.chg.includes(r) ? " chg" : ""}">${s.slice(0,4)}<br>${s.slice(4)}</span>`;
+      }).join("");
+    $("pltab").innerHTML = h;
+  }
+  const c = CNT[i];
+  $("stats").textContent = `演示内计数：取指请求 ${c.f} 次 · 回填 ${c.r} 次 · 发射 ${c.i} 条`;
 
   $("frameidx").textContent = `${i+1} / ${FRAMES.length}`;
   $("pfill").style.width = ((i+1)/FRAMES.length*100) + "%";
