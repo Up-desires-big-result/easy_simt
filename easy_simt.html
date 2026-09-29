@@ -351,7 +351,8 @@ const IWIN = [
   {pc:5, hex:"40C00000", asm:"CSRR r6, %tid.x",   ptx:"mov.u32 %r1, %tid.x"},
   {pc:6, hex:"04E42980", asm:"IMAD r7, r4, r5, r6", ptx:"mad.lo.s32 %r2, %r4, %r5, %r1"},
   {pc:7, hex:"08808000", asm:"IADD r4, r0, #0",   ptx:"mov.f32 %f23, 0f00000000"},
-  {pc:8, hex:"1D1C6800", asm:"SETP p1, r7, r3, I_GE", ptx:"setp.ge.s32 %p1, %r2, %r3"}
+  {pc:8, hex:"1D1C6800", asm:"SETP p1, r7, r3, I_GE", ptx:"setp.ge.s32 %p1, %r2, %r3"},
+  {pc:9, hex:"45000004", asm:"BR p1, BB0_2", ptx:"@%p1 bra BB0_2"}
 ];
 
 /* ================= 帧（每帧 = 一次模块间流动；正文 = 本指令中各 block 做了什么） =================
@@ -697,7 +698,46 @@ const FRAMES = [
     mods:["ialu","ws"], edges:[["ialu_ws_br / ialu_ws_wbdone","wbdone(p1)"]],
     ba:{ialu:["上报 wbdone（仅谓词写）"],
         ws:["前端职责完成","PC→9"]},
-    act:{ialu:255, ws:1}, st:{pc:9, sb:[], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:8 }
+    act:{ialu:255, ws:1}, st:{pc:9, sb:[], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:8 },
+
+  { title:"取指请求（命中）", ch:"ws → icache",
+    desc:"BR p1, BB0_2：谓词分支——taken = mask ∩ P[p1]，目标 = PC+4 = 13。p1=00000000 全 lane 假 → taken=空，全体走顺序流。",
+    pl:"pc=9",
+    mods:["ws","icache"], edges:[["ws_icache_req","pc=9"]],
+    ba:{ws:["PC=9 发出取指请求"],
+        icache:["行 1 命中（pc9 同行）"]},
+    act:{ws:1, icache:1}, st:{pc:9, sb:[], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:9 },
+
+  { title:"取指返回", ch:"icache → ws",
+    desc:"BR p1, BB0_2：谓词分支——taken = mask ∩ P[p1]，目标 = PC+4 = 13。p1=00000000 全 lane 假 → taken=空，全体走顺序流。",
+    pl:"inst=0x45000004",
+    mods:["icache","ws"], edges:[["icache_ws_rsp","inst=0x45000004"]],
+    ba:{icache:["一拍返回指令字","0x45000004"],
+        ws:["译码：BR p1 → pc13","无读口 · 不登记记分板"]},
+    act:{icache:1, ws:1}, st:{pc:9, sb:[], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:9 },
+
+  { title:"发射至 ialu", ch:"ws → ialu",
+    desc:"BR p1, BB0_2：谓词分支——taken = mask ∩ P[p1]，目标 = PC+4 = 13。p1=00000000 全 lane 假 → taken=空，全体走顺序流。",
+    pl:"BR · psel=p1 · u=0 · neg=0 · target=pc13",
+    mods:["ws","ialu"], edges:[["ws_ialu_issue","BR · psel=p1 · target=13"]],
+    ba:{ws:["发射 BR → ialu（无读口）","在途置 W_BR 等决议"],
+        ialu:["接收发射包","进入分支决议段"]},
+    act:{ws:1, ialu:255}, st:{pc:9, sb:[], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:9 },
+
+  { title:"分支决议", ch:"ialu → ws",
+    desc:"BR p1, BB0_2：谓词分支——taken = mask ∩ P[p1]，目标 = PC+4 = 13。p1=00000000 全 lane 假 → taken=空，全体走顺序流。",
+    pl:"taken = 0xFF ∩ 00000000 = 空 · target=13",
+    mods:["ialu","ws"], edges:[["ialu_ws_br / ialu_ws_wbdone","br_taken=空 · target=13"]],
+    ba:{ialu:["读谓词 p1=00000000","taken = mask ∩ P[p1] = 空"],
+        ws:["接收 br_taken=空","均匀分支：taken=∅"]},
+    act:{ialu:255, ws:1}, st:{pc:9, sb:[], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:9 },
+
+  { title:"均匀分支（不压栈）", ch:"ws",
+    desc:"BR p1, BB0_2：谓词分支——taken = mask ∩ P[p1]，目标 = PC+4 = 13。p1=00000000 全 lane 假 → taken=空，全体走顺序流。均匀分支不访问分化栈，PC ← PC+1，mask 不变。",
+    pl:"PC ← 10 · mask 不变 · 分化栈不压",
+    mods:["ws"], edges:[],
+    ba:{ws:["taken=∅ → 均匀分支","不访问分化栈 · mask 不变","PC ← 10"]},
+    act:{ws:1}, st:{pc:10, sb:[], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:9 }
 ];
 
 /* 演示内计数（随帧预累计）：取指请求 / 回填 / 发射；合并帧按 2 计 */
