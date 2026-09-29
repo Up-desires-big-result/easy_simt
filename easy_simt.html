@@ -94,6 +94,8 @@
   .memrow.lit{fill:#B91C1C;font-weight:700}
   .imline{fill:#FEF9C3;opacity:0}
   .imline.lit{opacity:1}
+  .pagelink{font-size:10px;fill:#2563EB;cursor:pointer;font-family:Consolas,Menlo,monospace}
+  .pagelink:hover{fill:#1D4ED8}
   .lg-txt{font-size:10px;fill:#64748B}
   .foot{font-size:10px;fill:#94A3B8}
 </style>
@@ -217,6 +219,7 @@
     <text class="memrow" x="800" y="207" id="im-pc5">5 40C00000 CSRR r6</text>
     <text class="memrow" x="800" y="222" id="im-pc6">6 04E42980 IMAD r7</text>
     <text class="memrow" x="800" y="237" id="im-pc7">7 08808000 IADD r4</text>
+    <text class="pagelink" id="impage-btn" x="935" y="268" text-anchor="end">pc 8..15 ▸</text>
   </g>
   <g class="blk" data-mod="dmem">
     <rect x="790" y="272" width="150" height="110" rx="6" fill="#F8FAFC" stroke="#94A3B8" stroke-width="1.3" stroke-dasharray="5 4"/>
@@ -322,6 +325,7 @@
     <div class="ctx">
       <span class="k">PC</span><span class="v" id="stPC">—</span>
       <span class="k">active mask</span><span class="v" style="display:flex;gap:3px" id="stMask"></span>
+      <span class="k">谓词</span><span class="v" style="font-size:10px" id="stPred">—</span>
       <span class="k">分化栈</span><span class="v" id="stDiv">空</span>
       <span class="k">记分板</span><span class="v" id="stSB">空</span>
     </div>
@@ -346,7 +350,8 @@ const IWIN = [
   {pc:4, hex:"40A20000", asm:"CSRR r5, %ctaid.x", ptx:"mov.u32 %r5, %ctaid.x"},
   {pc:5, hex:"40C00000", asm:"CSRR r6, %tid.x",   ptx:"mov.u32 %r1, %tid.x"},
   {pc:6, hex:"04E42980", asm:"IMAD r7, r4, r5, r6", ptx:"mad.lo.s32 %r2, %r4, %r5, %r1"},
-  {pc:7, hex:"08808000", asm:"IADD r4, r0, #0",   ptx:"mov.f32 %f23, 0f00000000"}
+  {pc:7, hex:"08808000", asm:"IADD r4, r0, #0",   ptx:"mov.f32 %f23, 0f00000000"},
+  {pc:8, hex:"1D1C6800", asm:"SETP p1, r7, r3, I_GE", ptx:"setp.ge.s32 %p1, %r2, %r3"}
 ];
 
 /* ================= 帧（每帧 = 一次模块间流动；正文 = 本指令中各 block 做了什么） =================
@@ -621,7 +626,78 @@ const FRAMES = [
     ba:{ialu:["写回 r4 ← 0","上报 wbdone(r4)"],
         rf:["bank 写入 r4","lane_mask=0xFF 门控"],
         ws:["记分板清 r4","PC→8"]},
-    act:{ialu:255, rf:255}, st:{pc:8, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:7, chg:["r4"] }
+    act:{ialu:255, rf:255}, st:{pc:8, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:7, chg:["r4"] },
+
+  { title:"取指请求（缺失）", ch:"ws → icache",
+    desc:"SETP p1, r7, r3, I_GE：比较置谓词——逐 lane 有符号比较 R[r7] ≥ R[r3]，结果写入 P[p1] 对应位。tid 0..7 均小于 1000，比较全部不成立，p1 ← 00000000。",
+    pl:"pc=8",
+    mods:["ws","icache"], edges:[["ws_icache_req","pc=8"]],
+    ba:{ws:["PC=8 发出取指请求","阻塞等待 · 记 IMISS"],
+        icache:["查行 1：tag 不匹配","缺失 · 等待回填"]},
+    act:{ws:1}, st:{pc:8, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:8 },
+
+  { title:"回填请求", ch:"icache → memif",
+    desc:"SETP p1, r7, r3, I_GE：比较置谓词——逐 lane 有符号比较 R[r7] ≥ R[r3]，结果写入 P[p1] 对应位。tid 0..7 均小于 1000，比较全部不成立，p1 ← 00000000。",
+    pl:"addr=0x20（行对齐）",
+    mods:["icache","memif"], edges:[["icache_memif_req","addr=0x20"]],
+    ba:{icache:["向 memif 请求回填行 1","addr=0x20（行对齐）"],
+        memif:["占用单在途事务槽","准备发 AXI 读"]},
+    act:{memif:1}, st:{pc:8, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:8 },
+
+  { title:"AXI 读地址（AR）", ch:"memif → 指令段",
+    desc:"SETP p1, r7, r3, I_GE：比较置谓词——逐 lane 有符号比较 R[r7] ≥ R[r3]，结果写入 P[p1] 对应位。tid 0..7 均小于 1000，比较全部不成立，p1 ← 00000000。",
+    pl:"araddr=0x20 · arlen=0 · arsize=32B/拍",
+    mods:["memif","imem"], edges:[["AXI4（AW/W/B/AR/R 五通道）","AR: araddr=0x20"]],
+    ba:{memif:["AXI AR：araddr=0x20","单拍整行 · 32B/拍"]},
+    act:{memif:1}, st:{pc:8, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:8 },
+
+  { title:"AXI 读数据（R）", ch:"指令段 → memif",
+    desc:"SETP p1, r7, r3, I_GE：比较置谓词——逐 lane 有符号比较 R[r7] ≥ R[r3]，结果写入 P[p1] 对应位。tid 0..7 均小于 1000，比较全部不成立，p1 ← 00000000。",
+    pl:"rdata=行1（pc8..15）· rresp=OKAY",
+    mods:["imem","memif"], edges:[["AXI4（AW/W/B/AR/R 五通道）","R: 行1（pc8..15）"]],
+    ba:{imem:["返回行 1：pc8..15","32B"],
+        memif:["接收 R 数据：行 1"]},
+    act:{memif:1}, st:{pc:8, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:8 },
+
+  { title:"回填数据", ch:"memif → icache",
+    desc:"SETP p1, r7, r3, I_GE：比较置谓词——逐 lane 有符号比较 R[r7] ≥ R[r3]，结果写入 P[p1] 对应位。tid 0..7 均小于 1000，比较全部不成立，p1 ← 00000000。",
+    pl:"data=256b（行 1）",
+    mods:["memif","icache"], edges:[["memif_icache_rsp","行 1（pc8..15）"]],
+    ba:{memif:["转发行 1 数据 → icache"],
+        icache:["行 1 写入 · 置有效位"]},
+    act:{icache:1}, st:{pc:8, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:8 },
+
+  { title:"取指返回", ch:"icache → ws",
+    desc:"SETP p1, r7, r3, I_GE：比较置谓词——逐 lane 有符号比较 R[r7] ≥ R[r3]，结果写入 P[p1] 对应位。tid 0..7 均小于 1000，比较全部不成立，p1 ← 00000000。",
+    pl:"inst=0x1D1C6800",
+    mods:["icache","ws"], edges:[["icache_ws_rsp","inst=0x1D1C6800"]],
+    ba:{icache:["回填后命中 · 返回指令字","0x1D1C6800"],
+        ws:["译码：SETP p1, r7, r3, I_GE","读口规划：一阶段"]},
+    act:{icache:1, ws:1}, st:{pc:8, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:8 },
+
+  { title:"读操作数", ch:"ws ↔ rf",
+    desc:"SETP p1, r7, r3, I_GE：比较置谓词——逐 lane 有符号比较 R[r7] ≥ R[r3]，结果写入 P[p1] 对应位。tid 0..7 均小于 1000，比较全部不成立，p1 ← 00000000。",
+    pl:"rs1=r7 · rs2=r3 → a=tid 0..7 · b=1000×8",
+    mods:["ws","rf"], edges:[["ws_rf_rd","rs1=r7 · rs2=r3"],["rf_ws_rddata","a=0..7 · b=1000×8"]],
+    ba:{ws:["一阶段读：r7、r3","接收 a/b 存操作数寄存器"],
+        rf:["双读口读 r7、r3","a=0..7（逐 lane）· b=1000"]},
+    act:{ws:1, rf:255}, st:{pc:8, sb:[], regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:8 },
+
+  { title:"发射至 ialu（谓词写入）", ch:"ws → ialu",
+    desc:"SETP p1, r7, r3, I_GE：比较置谓词——逐 lane 有符号比较 R[r7] ≥ R[r3]，结果写入 P[p1] 对应位。tid 0..7 均小于 1000，比较全部不成立，p1 ← 00000000。",
+    pl:"SETP · pd=p1 · a=0..7 · b=1000×8 · cond=ge",
+    mods:["ws","ialu"], edges:[["ws_ialu_issue","SETP · pd=p1 · a/b 向量"]],
+    ba:{ws:["发射 SETP → ialu","SETP 不登记记分板（无寄存器写回）"],
+        ialu:["每 lane 比较 a ≥ b","发射拍写 p1 ← 00000000"]},
+    act:{ws:1, ialu:255}, st:{pc:8, sb:[], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:8, chg:["p1"] },
+
+  { title:"完成（无寄存器写回）", ch:"ialu → ws",
+    desc:"SETP p1, r7, r3, I_GE：比较置谓词——逐 lane 有符号比较 R[r7] ≥ R[r3]，结果写入 P[p1] 对应位。tid 0..7 均小于 1000，比较全部不成立，p1 ← 00000000。写谓词不改变 active mask，分化由后续 BR 依据谓词判定。",
+    pl:"wbdone(p1) · p1=00000000 · PC→9",
+    mods:["ialu","ws"], edges:[["ialu_ws_br / ialu_ws_wbdone","wbdone(p1)"]],
+    ba:{ialu:["上报 wbdone（仅谓词写）"],
+        ws:["前端职责完成","PC→9"]},
+    act:{ialu:255, ws:1}, st:{pc:9, sb:[], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:0x3E8, r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:8 }
 ];
 
 /* 演示内计数（随帧预累计）：取指请求 / 回填 / 发射；合并帧按 2 计 */
@@ -762,7 +838,7 @@ function render(i) {
   });
 
   $("imline").classList.toggle("lit", !!f.imemLit);
-  for (let p = 0; p < 8; p++) $("im-pc"+p).classList.toggle("lit", !!f.imemLit || f.cur === p);
+  for (let p = 0; p < 8; p++) $("im-pc"+p).classList.toggle("lit", !!f.imemLit || f.cur === imPage*8 + p);
 
   const wi = IWIN.find(w => w.pc === f.cur);
   $("iinfo").innerHTML =
@@ -776,6 +852,12 @@ function render(i) {
   $("stPC").textContent = f.st.pc;
   $("stSB").textContent = f.st.sb.length ? f.st.sb.join(" ") + " 待写回" : "空";
   [...$("stMask").children].forEach(d => d.classList.remove("off"));
+  /* 谓词 p0..p3：复位值 0；st.pred 记录已写值（位掩码），chg 命中时琥珀高亮 */
+  const pr = f.st.pred || {};
+  $("stPred").innerHTML = [0,1,2,3].map(k => {
+    const key = "p" + k, on = !!(f.chg && f.chg.includes(key)), v = pr[key];
+    return `<span${on ? ' style="color:#B45309;font-weight:700"' : ""}>${key}=${v === undefined ? "00000000" : v.toString(2).padStart(8, "0")}</span>`;
+  }).join("&nbsp;&nbsp;");
   REGN.forEach(r => {
     const cell = $("reg-"+r).querySelector(".rv");
     const v = f.st.regs[r];
@@ -840,6 +922,18 @@ document.addEventListener("keydown", ev => {
   if (ev.key === "ArrowLeft") step(-1);
   else if (ev.key === "ArrowRight") step(1);
 });
+
+/* ================= IMEM 指令段分页（每页 8 行） ================= */
+let imPage = 0;
+function renderImem() {
+  for (let p = 0; p < 8; p++) {
+    const wi = IWIN.find(w => w.pc === imPage*8 + p);
+    $("im-pc"+p).textContent = wi ? `${wi.pc} ${wi.hex} ${wi.asm.split(",")[0]}` : "";
+  }
+  $("impage-btn").textContent = imPage ? "◂ pc 0..7" : "pc 8..15 ▸";
+}
+$("impage-btn").addEventListener("click", () => { imPage ^= 1; renderImem(); render(cur); });
+renderImem();
 
 render(0);
 </script>
