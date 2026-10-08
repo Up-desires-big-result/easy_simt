@@ -353,7 +353,8 @@ const IWIN = [
   {pc:7, hex:"08808000", asm:"IADD r4, r0, #0",   ptx:"mov.f32 %f23, 0f00000000"},
   {pc:8, hex:"1D1C6800", asm:"SETP p1, r7, r3, I_GE", ptx:"setp.ge.s32 %p1, %r2, %r3"},
   {pc:9, hex:"45000004", asm:"BR p1, BB0_2", ptx:"@%p1 bra BB0_2"},
-  {pc:10, hex:"0C678002", asm:"SHL r3, r7, #2", ptx:"ld.global.nc.f32 %f23, [%rd5]"}
+  {pc:10, hex:"0C678002", asm:"SHL r3, r7, #2", ptx:"ld.global.nc.f32 %f23, [%rd5]"},
+  {pc:11, hex:"2C811800", asm:"LDG r4, r1, r3", ptx:"ld.global.nc.f32 %f23, [%rd5]"}
 ];
 
 /* ================= 帧（每帧 = 一次模块间流动；正文 = 本指令中各 block 做了什么） =================
@@ -779,7 +780,102 @@ const FRAMES = [
     ba:{ialu:["写回 r3 ← 0..28 步长 4","上报 wbdone(r3)"],
         rf:["bank 写入 r3（逐 lane 值）","lane_mask=0xFF 门控"],
         ws:["记分板清 r3","PC→11"]},
-    act:{ialu:255, rf:255}, st:{pc:11, sb:[], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:10, chg:["r3"] }
+    act:{ialu:255, rf:255}, st:{pc:11, sb:[], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:10, chg:["r3"] },
+
+  { title:"取指请求（命中）", ch:"ws → icache",
+    desc:"LDG r4, r1, r3：全局装载——每 lane 地址 = R[r1]+R[r3] = 0x100000+tid×4，从 in 数组装载 32 位写入 r4（in[i] = ((i%7)-3)×100）。",
+    pl:"pc=11",
+    mods:["ws","icache"], edges:[["ws_icache_req","pc=11"]],
+    ba:{ws:["PC=11 发出取指请求"],
+        icache:["行 1 命中（pc11 同行）"]},
+    act:{ws:1, icache:1}, st:{pc:11, sb:[], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:11 },
+
+  { title:"取指返回", ch:"icache → ws",
+    desc:"LDG r4, r1, r3：全局装载——每 lane 地址 = R[r1]+R[r3] = 0x100000+tid×4，从 in 数组装载 32 位写入 r4（in[i] = ((i%7)-3)×100）。",
+    pl:"inst=0x2C811800",
+    mods:["icache","ws"], edges:[["icache_ws_rsp","inst=0x2C811800"]],
+    ba:{icache:["一拍返回指令字","0x2C811800"],
+        ws:["译码：LDG r4, r1, r3","读口规划：一阶段"]},
+    act:{icache:1, ws:1}, st:{pc:11, sb:[], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:11 },
+
+  { title:"读操作数", ch:"ws ↔ rf",
+    desc:"LDG r4, r1, r3：全局装载——每 lane 地址 = R[r1]+R[r3] = 0x100000+tid×4，从 in 数组装载 32 位写入 r4（in[i] = ((i%7)-3)×100）。",
+    pl:"rs1=r1 · rs2=r3 → a=0x100000×8 · b=0,4,...,28",
+    mods:["ws","rf"], edges:[["ws_rf_rd","rs1=r1 · rs2=r3"],["rf_ws_rddata","a=0x100000×8 · b=0..28"]],
+    ba:{ws:["一阶段读：r1、r3","接收 a/b 存操作数寄存器"],
+        rf:["双读口读 r1、r3","a=0x100000 · b=0..28（逐 lane）"]},
+    act:{ws:1, rf:255}, st:{pc:11, sb:[], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:11 },
+
+  { title:"发射至 lsu（LMISS 停顿）", ch:"ws → lsu",
+    desc:"LDG r4, r1, r3：全局装载——每 lane 地址 = R[r1]+R[r3] = 0x100000+tid×4，从 in 数组装载 32 位写入 r4（in[i] = ((i%7)-3)×100）。",
+    pl:"LDG · rd=r4 · opa=0x100000×8 · opb=0..28",
+    mods:["ws","lsu"], edges:[["ws_lsu_issue","LDG · rd=r4 · opa/opb 向量"],["lsu_ws_stall / lsu_ws_wbdone","LMISS 停顿"]],
+    ba:{ws:["携带 opa/opb 发射 LDG → lsu","记分板登记 r4","收到 LMISS：阻塞取指"],
+        lsu:["接收发射包","地址生成：a+b（逐 lane）","上报 LMISS（发射拍）"]},
+    act:{ws:1, lsu:255}, st:{pc:11, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:11 },
+
+  { title:"l1sm 请求（缺失）", ch:"lsu → l1sm",
+    desc:"LDG r4, r1, r3：全局装载——每 lane 地址 = R[r1]+R[r3] = 0x100000+tid×4，从 in 数组装载 32 位写入 r4（in[i] = ((i%7)-3)×100）。",
+    pl:"addr[8] = 0x100000..0x10001C（同一行 · 8 bank）",
+    mods:["lsu","l1sm"], edges:[["lsu_l1sm_req","addr[8] = 0x100000+tid×4"]],
+    ba:{lsu:["8-lane 锁步发出请求","地址 0x100000..0x10001C"],
+        l1sm:["查行 0x100000：tag 不匹配","缺失 · 等待回填"]},
+    act:{lsu:255, l1sm:1}, st:{pc:11, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:11 },
+
+  { title:"回填请求", ch:"l1sm → memif",
+    desc:"LDG r4, r1, r3：全局装载——每 lane 地址 = R[r1]+R[r3] = 0x100000+tid×4，从 in 数组装载 32 位写入 r4（in[i] = ((i%7)-3)×100）。",
+    pl:"addr=0x100000（行对齐）",
+    mods:["l1sm","memif"], edges:[["l1sm_memif_req","addr=0x100000（行对齐）"]],
+    ba:{l1sm:["向 memif 请求回填行","addr=0x100000（行对齐）"],
+        memif:["占用单在途事务槽","准备发 AXI 读"]},
+    act:{memif:1}, st:{pc:11, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:11 },
+
+  { title:"AXI 读地址（AR）", ch:"memif → 数据段",
+    desc:"LDG r4, r1, r3：全局装载——每 lane 地址 = R[r1]+R[r3] = 0x100000+tid×4，从 in 数组装载 32 位写入 r4（in[i] = ((i%7)-3)×100）。",
+    pl:"araddr=0x100000 · arlen=0 · arsize=32B/拍",
+    mods:["memif","dmem"], edges:[["AXI4（AW/W/B/AR/R 五通道）","AR: araddr=0x100000"]],
+    ba:{memif:["AXI AR：araddr=0x100000","单拍整行 · 32B/拍"]},
+    act:{memif:1}, st:{pc:11, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:11 },
+
+  { title:"AXI 读数据（R）", ch:"数据段 → memif",
+    desc:"LDG r4, r1, r3：全局装载——每 lane 地址 = R[r1]+R[r3] = 0x100000+tid×4，从 in 数组装载 32 位写入 r4（in[i] = ((i%7)-3)×100）。",
+    pl:"rdata=in[0..7]（32B）· rresp=OKAY · 片外延迟 MEM_LAT=20 拍",
+    mods:["dmem","memif"], edges:[["AXI4（AW/W/B/AR/R 五通道）","R: in[0..7]（32B）"]],
+    ba:{dmem:["返回 in[0..7]：8 字","-300,-200,-100,0,100,200,300,-300"],
+        memif:["接收 R 数据（MEM_LAT=20）"]},
+    act:{memif:1}, st:{pc:11, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:11 },
+
+  { title:"回填数据", ch:"memif → l1sm",
+    desc:"LDG r4, r1, r3：全局装载——每 lane 地址 = R[r1]+R[r3] = 0x100000+tid×4，从 in 数组装载 32 位写入 r4（in[i] = ((i%7)-3)×100）。",
+    pl:"data=256b（行 0x100000）",
+    mods:["memif","l1sm"], edges:[["memif_l1sm_rsp","行 0x100000（32B）"]],
+    ba:{memif:["转发行数据 → l1sm"],
+        l1sm:["行写入 8 bank（word 0..7）","置有效位"]},
+    act:{l1sm:255}, st:{pc:11, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:11 },
+
+  { title:"l1sm 应答", ch:"l1sm → lsu",
+    desc:"LDG r4, r1, r3：全局装载——每 lane 地址 = R[r1]+R[r3] = 0x100000+tid×4，从 in 数组装载 32 位写入 r4（in[i] = ((i%7)-3)×100）。",
+    pl:"data[8] = in[0..7]",
+    mods:["l1sm","lsu"], edges:[["l1sm_lsu_rsp","data[8] = in[0..7]"]],
+    ba:{l1sm:["回填后命中 · 组装 8-lane 数据","word 0..7 → lane 0..7"],
+        lsu:["接收数据","引导写回"]},
+    act:{l1sm:255, lsu:255}, st:{pc:11, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:11 },
+
+  { title:"写回", ch:"lsu → rf",
+    desc:"LDG r4, r1, r3：全局装载——每 lane 地址 = R[r1]+R[r3] = 0x100000+tid×4，从 in 数组装载 32 位写入 r4（in[i] = ((i%7)-3)×100）。",
+    pl:"r4 ← in[0..7]（逐 lane · f32 位型）· lane_mask=0xFF",
+    mods:["lsu","rf"], edges:[["lsu_rf_wb","r4 ← in[0..7]"]],
+    ba:{lsu:["写回 r4 ← in[tid]（逐 lane）"],
+        rf:["bank 写入 r4（逐 lane 值）","lane_mask=0xFF 门控"]},
+    act:{lsu:255, rf:255}, st:{pc:11, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC3960000,0xC3480000,0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000], r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:11, chg:["r4"] },
+
+  { title:"完成 + 解除停顿", ch:"lsu → ws",
+    desc:"LDG r4, r1, r3：全局装载——每 lane 地址 = R[r1]+R[r3] = 0x100000+tid×4，从 in 数组装载 32 位写入 r4（in[i] = ((i%7)-3)×100）。",
+    pl:"wbdone(r4) · 解除 LMISS · PC→12",
+    mods:["lsu","ws"], edges:[["lsu_ws_stall / lsu_ws_wbdone","wbdone(r4)"]],
+    ba:{lsu:["上报 wbdone(r4)","解除 LMISS"],
+        ws:["记分板清 r4","恢复取指","PC→12"]},
+    act:{lsu:255, ws:1}, st:{pc:12, sb:[], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC3960000,0xC3480000,0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000], r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:11 }
 ];
 
 /* 演示内计数（随帧预累计）：取指请求 / 回填 / 发射；合并帧按 2 计 */
@@ -788,8 +884,8 @@ const CNT = FRAMES.reduce((acc, fr) => {
   const merged = /合并/.test(fr.title);
   acc.push({
     f: prev.f + (fr.edges.some(e => e[0] === "ws_icache_req") ? 1 : merged ? 2 : 0),
-    r: prev.r + (fr.edges.some(e => e[0] === "icache_memif_req") ? 1 : 0),
-    i: prev.i + (fr.edges.some(e => e[0] === "ws_ialu_issue") ? 1 : merged ? 2 : 0)
+    r: prev.r + (fr.edges.some(e => e[0] === "icache_memif_req" || e[0] === "l1sm_memif_req") ? 1 : 0),
+    i: prev.i + (fr.edges.some(e => e[0] === "ws_ialu_issue" || e[0] === "ws_lsu_issue") ? 1 : merged ? 2 : 0)
   });
   return acc;
 }, []);
