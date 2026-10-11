@@ -51,6 +51,10 @@
   .ctx{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:11.5px;margin-bottom:8px}
   .ctx .k{color:#94A3B8}
   .ctx .v{font-family:Consolas,Menlo,monospace}
+  .lane{width:14px;height:14px;border-radius:3px;background:#16A34A;color:#fff;font-size:9px;
+        display:flex;align-items:center;justify-content:center;font-family:Consolas,Menlo,monospace}
+  .lane.off{background:#E2E8F0;color:#94A3B8}
+  #stDiv{font-size:10px;line-height:1.6}
   .regs{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px}
   .reg{border:1px solid #E2E8F0;border-radius:6px;padding:3px 2px;text-align:center;min-width:0}
   .reg .rn{font-size:9.5px;color:#94A3B8;font-family:Consolas,Menlo,monospace}
@@ -363,7 +367,8 @@ const IWIN = [
   {pc:17, hex:"10862800", asm:"XOR r4, r6, r5", ptx:"xor.b32 %r9, %r1, 16"},
   {pc:18, hex:"0CC48002", asm:"SHL r6, r4, #2", ptx:"shl.b32 %r10, %r9, 2"},
   {pc:19, hex:"34803000", asm:"LDS r4, r6", ptx:"ld.shared.f32 %f3, [%r12]"},
-  {pc:20, hex:"1E101A00", asm:"SETP p2, r4, r0, F_GT", ptx:"setp.gt.f32 %p2, %f3, 0f00000000"}
+  {pc:20, hex:"1E101A00", asm:"SETP p2, r4, r0, F_GT", ptx:"setp.gt.f32 %p2, %f3, 0f00000000"},
+  {pc:21, hex:"46000002", asm:"BR p2, BB0_4", ptx:"@%p2 bra BB0_4"}
 ];
 
 /* ================= 帧（每帧 = 一次模块间流动；正文 = 本指令中各 block 做了什么） =================
@@ -1301,7 +1306,46 @@ const FRAMES = [
     mods:["ialu","ws"], edges:[["ialu_ws_br / ialu_ws_wbdone","wbdone(p2)"]],
     ba:{ialu:["上报 wbdone（仅谓词写）"],
         ws:["前端职责完成","PC→21"]},
-    act:{ialu:255, ws:1}, st:{pc:21, sb:[], pred:{p1:0, p2:28}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000,0xC3480000,0xC2C80000], r5:16, r6:[64,68,72,76,80,84,88,92], r7:[0,1,2,3,4,5,6,7]}}, cur:20 }
+    act:{ialu:255, ws:1}, st:{pc:21, sb:[], pred:{p1:0, p2:28}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000,0xC3480000,0xC2C80000], r5:16, r6:[64,68,72,76,80,84,88,92], r7:[0,1,2,3,4,5,6,7]}}, cur:20 },
+
+  { title:"取指请求（命中）", ch:"ws → icache",
+    desc:"BR p2, BB0_4：谓词分支——taken = mask ∩ P[p2]，目标 = PC+2 = 23。p2=00011100 部分真 → taken 与非 taken 均非空，首次真分化：从重聚表读取 R=BRT[21]=46，按双侧型压栈并走 taken 侧。",
+    pl:"pc=21",
+    mods:["ws","icache"], edges:[["ws_icache_req","pc=21"]],
+    ba:{ws:["PC=21 发出取指请求"],
+        icache:["行 2 命中（pc21 同行）"]},
+    act:{ws:1, icache:1}, st:{pc:21, sb:[], pred:{p1:0, p2:28}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000,0xC3480000,0xC2C80000], r5:16, r6:[64,68,72,76,80,84,88,92], r7:[0,1,2,3,4,5,6,7]}}, cur:21 },
+
+  { title:"取指返回", ch:"icache → ws",
+    desc:"BR p2, BB0_4：谓词分支——taken = mask ∩ P[p2]，目标 = PC+2 = 23。p2=00011100 部分真 → taken 与非 taken 均非空，首次真分化：从重聚表读取 R=BRT[21]=46，按双侧型压栈并走 taken 侧。",
+    pl:"inst=0x46000002",
+    mods:["icache","ws"], edges:[["icache_ws_rsp","inst=0x46000002"]],
+    ba:{icache:["一拍返回指令字","0x46000002"],
+        ws:["译码：BR p2 → pc23","无读口 · 不登记记分板"]},
+    act:{icache:1, ws:1}, st:{pc:21, sb:[], pred:{p1:0, p2:28}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000,0xC3480000,0xC2C80000], r5:16, r6:[64,68,72,76,80,84,88,92], r7:[0,1,2,3,4,5,6,7]}}, cur:21 },
+
+  { title:"发射至 ialu", ch:"ws → ialu",
+    desc:"BR p2, BB0_4：谓词分支——taken = mask ∩ P[p2]，目标 = PC+2 = 23。p2=00011100 部分真 → taken 与非 taken 均非空，首次真分化：从重聚表读取 R=BRT[21]=46，按双侧型压栈并走 taken 侧。",
+    pl:"BR · psel=p2 · u=0 · neg=0 · target=pc23",
+    mods:["ws","ialu"], edges:[["ws_ialu_issue","BR · psel=p2 · target=23"]],
+    ba:{ws:["发射 BR → ialu（无读口）","在途置 W_BR 等决议"],
+        ialu:["接收发射包","进入分支决议段"]},
+    act:{ws:1, ialu:255}, st:{pc:21, sb:[], pred:{p1:0, p2:28}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000,0xC3480000,0xC2C80000], r5:16, r6:[64,68,72,76,80,84,88,92], r7:[0,1,2,3,4,5,6,7]}}, cur:21 },
+
+  { title:"分支决议", ch:"ialu → ws",
+    desc:"BR p2, BB0_4：谓词分支——taken = mask ∩ P[p2]，目标 = PC+2 = 23。p2=00011100 部分真 → taken 与非 taken 均非空，首次真分化：从重聚表读取 R=BRT[21]=46，按双侧型压栈并走 taken 侧。",
+    pl:"taken = 0xFF ∩ 00011100 = 00011100 · nt = 11100011 · target=23",
+    mods:["ialu","ws"], edges:[["ialu_ws_br / ialu_ws_wbdone","br_taken=00011100 · target=23"]],
+    ba:{ialu:["读谓词 p2=00011100","taken = mask ∩ P[p2] = 00011100","nt = 11100011"],
+        ws:["接收 br_taken / nt","taken 与 nt 均非空 → 分化"]},
+    act:{ialu:255, ws:1}, st:{pc:21, sb:[], pred:{p1:0, p2:28}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000,0xC3480000,0xC2C80000], r5:16, r6:[64,68,72,76,80,84,88,92], r7:[0,1,2,3,4,5,6,7]}}, cur:21 },
+
+  { title:"双侧分化压栈", ch:"ws",
+    desc:"BR p2, BB0_4：谓词分支——taken = mask ∩ P[p2]，目标 = PC+2 = 23。p2=00011100 部分真 → taken 与非 taken 均非空，首次真分化：从重聚表读取 R=BRT[21]=46，按双侧型压栈并走 taken 侧。target(23) ≠ R(46) → 双侧型：压 (R, mask) 与 (PC+1, nt)，mask ← taken，PC ← target。warp 0 以 3 个活动 lane 继续执行 BB0_4，其余 5 lane 的重聚路径压栈待走。",
+    pl:"压栈 (46, 11111111) + (22, 11100011) · mask ← 00011100 · PC ← 23",
+    mods:["ws"], edges:[],
+    ba:{ws:["BRT[21] = 46（重聚点）","target 23 ≠ R 46 → 双侧型","压栈 (R=46, mask=0xFF)","压栈 (pc+1=22, nt=11100011)","mask ← taken=00011100","PC ← 23（BB0_4 taken 侧）"]},
+    act:{ws:1}, st:{pc:23, sb:[], mask:28, dsb:[{rpc:46, mask:255, new:true},{rpc:22, mask:227, new:true}], pred:{p1:0, p2:28}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000,0xC3480000,0xC2C80000], r5:16, r6:[64,68,72,76,80,84,88,92], r7:[0,1,2,3,4,5,6,7]}}, cur:21 }
 ];
 
 /* 演示内计数（随帧预累计）：取指请求 / 回填 / 发射；合并帧按 2 计 */
@@ -1455,7 +1499,13 @@ function render(i) {
 
   $("stPC").textContent = f.st.pc;
   $("stSB").textContent = f.st.sb.length ? f.st.sb.join(" ") + " 待写回" : "空";
-  [...$("stMask").children].forEach(d => d.classList.remove("off"));
+  const mk = f.st.mask === undefined ? 255 : f.st.mask;
+  [...$("stMask").children].forEach((d, l) => d.classList.toggle("off", !((mk >> l) & 1)));
+  /* 分化栈：st.dsb 数组 [{rpc,mask,new}]，新压项琥珀高亮 */
+  const dsb = f.st.dsb || [];
+  $("stDiv").innerHTML = dsb.length
+    ? dsb.map((e, i) => `<span${e.new ? ' style="color:#B45309;font-weight:700"' : ""}>栈${i}：pc=${e.rpc} · mask=${e.mask.toString(2).padStart(8,"0")}</span>`).join("<br>")
+    : "空";
   /* 谓词 p0..p3：复位值 0；st.pred 记录已写值（位掩码），chg 命中时琥珀高亮 */
   const pr = f.st.pred || {};
   $("stPred").innerHTML = [0,1,2,3].map(k => {
