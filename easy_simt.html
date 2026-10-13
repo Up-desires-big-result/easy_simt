@@ -370,7 +370,8 @@ const IWIN = [
   {pc:20, hex:"1E101A00", asm:"SETP p2, r4, r0, F_GT", ptx:"setp.gt.f32 %p2, %f3, 0f00000000"},
   {pc:21, hex:"46000002", asm:"BR p2, BB0_4", ptx:"@%p2 bra BB0_4"},
   {pc:23, hex:"1907F000", asm:"LUI r8, #0x3F800", ptx:"mul.rn.f32 %f8, %f3, 0f3F800347"},
-  {pc:24, hex:"15080347", asm:"ORI r8, r8, #0x0347", ptx:"mul.rn.f32 %f8, %f3, 0f3F800347"}
+  {pc:24, hex:"15080347", asm:"ORI r8, r8, #0x0347", ptx:"mul.rn.f32 %f8, %f3, 0f3F800347"},
+  {pc:25, hex:"20C44000", asm:"FMUL r6, r4, r8", ptx:"mul.rn.f32 %f8, %f3, 0f3F800347"}
 ];
 
 /* ================= 帧（每帧 = 一次模块间流动；正文 = 本指令中各 block 做了什么） =================
@@ -1452,7 +1453,48 @@ const FRAMES = [
     ba:{ialu:["写回 r8 ← 0x3F800347","上报 wbdone(r8)"],
         rf:["bank 写入 r8（仅活动 lane）","lane_mask=00011100 门控"],
         ws:["记分板清 r8","PC→25"]},
-    act:{ialu:28, rf:28}, st:{pc:25, sb:[], mask:28, dsb:[{rpc:46, mask:255},{rpc:22, mask:227}], pred:{p1:0, p2:28}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000,0xC3480000,0xC2C80000], r5:16, r6:[64,68,72,76,80,84,88,92], r7:[0,1,2,3,4,5,6,7], r8:[0,0,0x3F800347,0x3F800347,0x3F800347,0,0,0]}}, cur:24, chg:["r8"] }
+    act:{ialu:28, rf:28}, st:{pc:25, sb:[], mask:28, dsb:[{rpc:46, mask:255},{rpc:22, mask:227}], pred:{p1:0, p2:28}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000,0xC3480000,0xC2C80000], r5:16, r6:[64,68,72,76,80,84,88,92], r7:[0,1,2,3,4,5,6,7], r8:[0,0,0x3F800347,0x3F800347,0x3F800347,0,0,0]}}, cur:24, chg:["r8"] },
+
+  { title:"取指请求（命中）", ch:"ws → icache",
+    desc:"FMUL r6, r4, r8：浮点乘——每活动 lane 执行 IEEE-754 binary32 乘法（roundTiesToEven）：100/200/300 × 1.0001 ≈ 100.01/200.02/300.03 写入 r6。首次经 falu 执行，lane_mask=00011100 门控。",
+    pl:"pc=25",
+    mods:["ws","icache"], edges:[["ws_icache_req","pc=25"]],
+    ba:{ws:["PC=25 发出取指请求","mask=00011100（分化 taken 侧）"],
+        icache:["行 3 命中（pc25 同行）"]},
+    act:{ws:1, icache:1}, st:{pc:25, sb:[], mask:28, dsb:[{rpc:46, mask:255},{rpc:22, mask:227}], pred:{p1:0, p2:28}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000,0xC3480000,0xC2C80000], r5:16, r6:[64,68,72,76,80,84,88,92], r7:[0,1,2,3,4,5,6,7], r8:[0,0,0x3F800347,0x3F800347,0x3F800347,0,0,0]}}, cur:25 },
+
+  { title:"取指返回", ch:"icache → ws",
+    desc:"FMUL r6, r4, r8：浮点乘——每活动 lane 执行 IEEE-754 binary32 乘法（roundTiesToEven）：100/200/300 × 1.0001 ≈ 100.01/200.02/300.03 写入 r6。首次经 falu 执行，lane_mask=00011100 门控。",
+    pl:"inst=0x20C44000",
+    mods:["icache","ws"], edges:[["icache_ws_rsp","inst=0x20C44000"]],
+    ba:{icache:["一拍返回指令字","0x20C44000"],
+        ws:["译码：FMUL r6, r4, r8","读口规划：一阶段"]},
+    act:{icache:1, ws:1}, st:{pc:25, sb:[], mask:28, dsb:[{rpc:46, mask:255},{rpc:22, mask:227}], pred:{p1:0, p2:28}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000,0xC3480000,0xC2C80000], r5:16, r6:[64,68,72,76,80,84,88,92], r7:[0,1,2,3,4,5,6,7], r8:[0,0,0x3F800347,0x3F800347,0x3F800347,0,0,0]}}, cur:25 },
+
+  { title:"读操作数", ch:"ws ↔ rf",
+    desc:"FMUL r6, r4, r8：浮点乘——每活动 lane 执行 IEEE-754 binary32 乘法（roundTiesToEven）：100/200/300 × 1.0001 ≈ 100.01/200.02/300.03 写入 r6。首次经 falu 执行，lane_mask=00011100 门控。",
+    pl:"rs1=r4 · rs2=r8 → a=100..300（活动）· b=1.0001f",
+    mods:["ws","rf"], edges:[["ws_rf_rd","rs1=r4 · rs2=r8"],["rf_ws_rddata","a=100,200,300 · b=1.0001f"]],
+    ba:{ws:["一阶段读：r4、r8","接收 a/b 存操作数寄存器"],
+        rf:["双读口读 r4、r8","a=100,200,300（lane 2/3/4）· b=0x3F800347"]},
+    act:{ws:1, rf:28}, st:{pc:25, sb:[], mask:28, dsb:[{rpc:46, mask:255},{rpc:22, mask:227}], pred:{p1:0, p2:28}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000,0xC3480000,0xC2C80000], r5:16, r6:[64,68,72,76,80,84,88,92], r7:[0,1,2,3,4,5,6,7], r8:[0,0,0x3F800347,0x3F800347,0x3F800347,0,0,0]}}, cur:25 },
+
+  { title:"发射至 falu", ch:"ws → falu",
+    desc:"FMUL r6, r4, r8：浮点乘——每活动 lane 执行 IEEE-754 binary32 乘法（roundTiesToEven）：100/200/300 × 1.0001 ≈ 100.01/200.02/300.03 写入 r6。首次经 falu 执行，lane_mask=00011100 门控。",
+    pl:"FMUL · rd=r6 · a/b 向量 · lane_mask=00011100",
+    mods:["ws","falu"], edges:[["ws_falu_issue","FMUL · rd=r6 · a/b 向量"]],
+    ba:{ws:["携带 a/b 发射 FMUL → falu","记分板登记 r6","首次浮点指令走 falu"],
+        falu:["接收发射包","每 lane：48 位积取位窗舍入","仅 lane 2/3/4 执行"]},
+    act:{ws:1, falu:28}, st:{pc:25, sb:["r6"], mask:28, dsb:[{rpc:46, mask:255},{rpc:22, mask:227}], pred:{p1:0, p2:28}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000,0xC3480000,0xC2C80000], r5:16, r6:[64,68,72,76,80,84,88,92], r7:[0,1,2,3,4,5,6,7], r8:[0,0,0x3F800347,0x3F800347,0x3F800347,0,0,0]}}, cur:25 },
+
+  { title:"写回 + 完成", ch:"falu → rf / ws",
+    desc:"FMUL r6, r4, r8：浮点乘——每活动 lane 执行 IEEE-754 binary32 乘法（roundTiesToEven）：100/200/300 × 1.0001 ≈ 100.01/200.02/300.03 写入 r6。首次经 falu 执行，lane_mask=00011100 门控——非活动 lane 保持 r6 原值（字节偏移）。",
+    pl:"r6 ← 100.01/200.02/300.03（仅 lane 2/3/4）· lane_mask=00011100",
+    mods:["falu","rf","ws"], edges:[["falu_rf_wb","r6 ← 乘积"],["falu_ws_wbdone","wbdone(r6)"]],
+    ba:{falu:["写回 r6 ← 0x42C8051F/0x4348051F/0x439603D7","上报 wbdone(r6)"],
+        rf:["bank 写入 r6（仅活动 lane）","lane_mask=00011100 门控","非活动 lane 保持原偏移值"],
+        ws:["记分板清 r6","PC→26"]},
+    act:{falu:28, rf:28}, st:{pc:26, sb:[], mask:28, dsb:[{rpc:46, mask:255},{rpc:22, mask:227}], pred:{p1:0, p2:28}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000,0xC3480000,0xC2C80000], r5:16, r6:[64,68,0x42C8051F,0x4348051F,0x439603D7,84,88,92], r7:[0,1,2,3,4,5,6,7], r8:[0,0,0x3F800347,0x3F800347,0x3F800347,0,0,0]}}, cur:25, chg:["r6"] }
 ];
 
 /* 演示内计数（随帧预累计）：取指请求 / 回填 / 发射；合并帧按 2 计 */
@@ -1462,7 +1504,7 @@ const CNT = FRAMES.reduce((acc, fr) => {
   acc.push({
     f: prev.f + (fr.edges.some(e => e[0] === "ws_icache_req") ? 1 : merged ? 2 : 0),
     r: prev.r + (fr.edges.some(e => e[0] === "icache_memif_req" || e[0] === "l1sm_memif_req") ? 1 : 0),
-    i: prev.i + (fr.edges.some(e => e[0] === "ws_ialu_issue" || e[0] === "ws_lsu_issue") ? 1 : merged ? 2 : 0)
+    i: prev.i + (fr.edges.some(e => e[0] === "ws_ialu_issue" || e[0] === "ws_lsu_issue" || e[0] === "ws_falu_issue") ? 1 : merged ? 2 : 0)
   });
   return acc;
 }, []);
