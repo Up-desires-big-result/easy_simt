@@ -89,6 +89,8 @@
   .die-t{font-size:11px;fill:#94A3B8;font-family:Consolas,Menlo,monospace}
   .cell{fill:#EDF2F7;stroke:#D5DDE6;stroke-width:.6}
   .cell.on{fill:#16A34A;stroke:#14532D}
+  .cell.sm{fill:#FEF3C7;stroke:#F59E0B}
+  .cell.sm.on{fill:#16A34A;stroke:#14532D}
   .cellnum{font-size:11px;fill:#94A3B8;font-family:Consolas,Menlo,monospace}
   .cellnum.on{fill:#F0FDF4}
   .cellcap{font-size:8.5px;fill:#94A3B8;font-family:Consolas,Menlo,monospace}
@@ -204,8 +206,9 @@
     <rect x="558" y="238" width="150" height="226" rx="5" fill="#F0FDF4" stroke="#16A34A" stroke-width="1.3"/>
     <text class="bname" x="568" y="256">l1sm</text>
     <text class="bfull" x="606" y="256">L1 + 共享存储</text>
-    <text class="brole" x="568" y="272">8 bank 统一 SRAM</text>
-    <text class="actline" id="act-l1sm" x="568" y="292"><tspan x="568"></tspan><tspan x="568" dy="14"></tspan><tspan x="568" dy="14"></tspan><tspan x="568" dy="14"></tspan></text>
+    <text class="brole" x="568" y="272">8 bank 统一 SRAM · 64 行 2KB</text>
+    <text class="brole" x="568" y="286" font-size="9.5">SM 行 0..3 钉扎 128B · L1 行 4..63</text>
+    <text class="actline" id="act-l1sm" x="568" y="306"><tspan x="568"></tspan><tspan x="568" dy="14"></tspan><tspan x="568" dy="14"></tspan><tspan x="568" dy="14"></tspan></text>
     <g class="cells" data-mod="l1sm"></g>
   </g>
 
@@ -289,7 +292,9 @@
     <path d="M660,226 V238" stroke="#DC2626" marker-end="url(#m-red)"/></g>
 
   <g class="edge" data-m="memif ext"><title>AXI4（AW/W/B/AR/R 五通道）</title>
-    <path d="M708,170 H790" stroke="#1E293B" marker-end="url(#m-dark)"/></g>
+    <path d="M708,132 H790" stroke="#1E293B" marker-end="url(#m-dark)"/></g>
+  <g class="edge" data-m="memif ext"><title>AXI4 数据读（l1sm · AR/R）</title>
+    <path d="M740,240 V300" stroke="#1E293B" marker-end="url(#m-dark)"/></g>
 
   <!-- 图例 -->
   <g>
@@ -857,14 +862,14 @@ const FRAMES = [
   { title:"AXI 读地址（AR）", ch:"memif → 数据段",
     desc:"LDG r4, r1, r3：全局装载——每 lane 地址 = R[r1]+R[r3] = 0x100000+tid×4，从 in 数组装载 32 位写入 r4（in[i] = ((i%7)-3)×100）。",
     pl:"araddr=0x100000 · arlen=0 · arsize=32B/拍",
-    mods:["memif","dmem"], edges:[["AXI4（AW/W/B/AR/R 五通道）","AR: araddr=0x100000"]],
+    mods:["memif","dmem"], edges:[["AXI4 数据读（l1sm · AR/R）","AR: araddr=0x100000"]],
     ba:{memif:["AXI AR：araddr=0x100000","单拍整行 · 32B/拍"]},
     act:{memif:1}, st:{pc:11, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:11 },
 
   { title:"AXI 读数据（R）", ch:"数据段 → memif",
     desc:"LDG r4, r1, r3：全局装载——每 lane 地址 = R[r1]+R[r3] = 0x100000+tid×4，从 in 数组装载 32 位写入 r4（in[i] = ((i%7)-3)×100）。",
     pl:"rdata=in[0..7]（32B）· rresp=OKAY · 片外延迟 MEM_LAT=20 拍",
-    mods:["dmem","memif"], edges:[["AXI4（AW/W/B/AR/R 五通道）","R: in[0..7]（32B）"]],
+    mods:["dmem","memif"], edges:[["AXI4 数据读（l1sm · AR/R）","R: in[0..7]（32B）"]],
     ba:{dmem:["返回 in[0..7]：8 字","-300,-200,-100,0,100,200,300,-300"],
         memif:["接收 R 数据（MEM_LAT=20）"]},
     act:{memif:1}, st:{pc:11, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:11 },
@@ -1919,6 +1924,7 @@ function setCells(act) {
     arr.forEach(({r, t}, i) => {
       const on = (bits >> i) & 1;
       r.classList.toggle("on", !!on);
+      if (mod === "l1sm" && i < 4) r.classList.add("sm");   /* 行 0..3 = SM 钉扎区 */
       if (t) t.classList.toggle("on", !!on);
     });
   }
