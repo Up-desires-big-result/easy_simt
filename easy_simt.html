@@ -89,8 +89,10 @@
   .die-t{font-size:11px;fill:#94A3B8;font-family:Consolas,Menlo,monospace}
   .cell{fill:#EDF2F7;stroke:#D5DDE6;stroke-width:.6}
   .cell.on{fill:#16A34A;stroke:#14532D}
-  .cell.sm{fill:#FEF3C7;stroke:#F59E0B}
-  .cell.sm.on{fill:#16A34A;stroke:#14532D}
+  .l1col{fill:#DBEAFE;stroke:#94A3B8;stroke-width:.6}
+  .l1col.sm{fill:#FDE68A;stroke:#D97706}
+  .l1col.on{fill:#16A34A;stroke:#14532D}
+  .l1col.sm.on{fill:#16A34A;stroke:#14532D}
   .cellnum{font-size:11px;fill:#94A3B8;font-family:Consolas,Menlo,monospace}
   .cellnum.on{fill:#F0FDF4}
   .cellcap{font-size:8.5px;fill:#94A3B8;font-family:Consolas,Menlo,monospace}
@@ -206,10 +208,11 @@
     <rect x="558" y="238" width="150" height="226" rx="5" fill="#F0FDF4" stroke="#16A34A" stroke-width="1.3"/>
     <text class="bname" x="568" y="256">l1sm</text>
     <text class="bfull" x="606" y="256">L1 + 共享存储</text>
-    <text class="brole" x="568" y="272">8 bank 统一 SRAM · 64 行 2KB</text>
-    <text class="brole" x="568" y="286" font-size="9.5">SM 行 0..3 钉扎 128B · L1 行 4..63</text>
+    <text class="brole" x="568" y="272">64 行 2KB · 8 bank</text>
+    <text class="brole" x="568" y="286" font-size="9.5">SM 4 行 · L1 60 行</text>
     <text class="actline" id="act-l1sm" x="568" y="306"><tspan x="568"></tspan><tspan x="568" dy="14"></tspan><tspan x="568" dy="14"></tspan><tspan x="568" dy="14"></tspan></text>
-    <g class="cells" data-mod="l1sm"></g>
+    <!-- 8 竖柱 bank 视图：柱高按行数比例，底段 4 行=SM 钉扎（琥珀），上段 60 行=L1（灰绿） -->
+    <g id="l1cols"></g>
   </g>
 
   <!-- 核外：指令段 + 数据段 -->
@@ -1841,7 +1844,7 @@ const CELLS = {
   falu:  {n:8,  cols:8,  x:394, y:324, s:9,  g:2},
   lsu:   {n:8,  cols:8,  x:394, y:450, s:8,  g:2},
   memif: {n:1,  cols:1,  x:568, y:206, s:12, g:0},
-  l1sm:  {n:8,  cols:4,  x:568, y:350, s:11, g:4}
+  l1sm:  {n:8,  cols:8,  x:568, y:350, s:13, g:5, v:true, noCells:true}
 };
 
 const svg = document.getElementById("svg");
@@ -1852,8 +1855,32 @@ const edgeByTitle = {};
 edges.forEach(e => { edgeByTitle[e.querySelector("title").textContent] = e; });
 
 const NS = "http://www.w3.org/2000/svg";
+
+/* l1sm 竖柱：8 根 bank 柱，柱总高=64 行按比例，底段 4 行 SM（琥珀）/上段 60 行 L1（灰绿），活动 bank 整柱变绿 */
+(function() {
+  const X0 = 568, GAP = 5, W = 13, H = 110, BOT = 458;   /* 底对齐块底 458 */
+  const SMH = Math.round(H * 4 / 64), L1H = H - SMH;
+  const g = document.getElementById("l1cols");
+  for (let b = 0; b < 8; b++) {
+    const x = X0 + b * (W + GAP);
+    const l1 = document.createElementNS(NS, "rect");
+    l1.setAttribute("class", "l1col");
+    l1.setAttribute("x", x); l1.setAttribute("y", BOT - H);
+    l1.setAttribute("width", W); l1.setAttribute("height", L1H);
+    l1.setAttribute("rx", 2);
+    g.appendChild(l1);
+    const sm = document.createElementNS(NS, "rect");
+    sm.setAttribute("class", "l1col sm");
+    sm.setAttribute("x", x); sm.setAttribute("y", BOT - SMH);
+    sm.setAttribute("width", W); sm.setAttribute("height", SMH);
+    sm.setAttribute("rx", 1);
+    g.appendChild(sm);
+  }
+})();
+
 const cellEls = {};   /* mod -> [{rect,text},...] */
 for (const [mod, c] of Object.entries(CELLS)) {
+  if (c.noCells) { cellEls[mod] = []; continue; }   /* l1sm 用竖柱视图，不走平铺格 */
   const g = svg.querySelector(`.cells[data-mod="${mod}"]`);
   const arr = [];
   for (let i = 0; i < c.n; i++) {
@@ -1924,9 +1951,12 @@ function setCells(act) {
     arr.forEach(({r, t}, i) => {
       const on = (bits >> i) & 1;
       r.classList.toggle("on", !!on);
-      if (mod === "l1sm" && i < 4) r.classList.add("sm");   /* 行 0..3 = SM 钉扎区 */
       if (t) t.classList.toggle("on", !!on);
     });
+    if (mod === "l1sm") {                      /* 竖柱 bank 同步点亮 */
+      document.querySelectorAll(".l1col").forEach((el, k) =>
+        el.classList.toggle("on", !!((bits >> (k >> 1)) & 1)));
+    }
   }
 }
 
