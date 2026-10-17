@@ -93,11 +93,13 @@
   .l1col.sm{fill:#FDE68A;stroke:#D97706}
   .l1col.on{fill:#16A34A;stroke:#14532D}
   .l1col.sm.on{fill:#16A34A;stroke:#14532D}
+  .l1col.l1hit{fill:#93C5FD;stroke:#3B82F6}
+  .l1col.sm.l1hit{fill:#FCD34D;stroke:#D97706}
   .icrow{fill:#DBEAFE;stroke:#94A3B8;stroke-width:.6}
   .icrow.on{fill:#16A34A;stroke:#14532D}
   .rfseg{fill:#DCFCE7;stroke:#86EFAC;stroke-width:.5}
   .rfseg.cur{fill:#86EFAC;stroke:#16A34A}
-  .rfcol.on .rfseg{fill:#16A34A;stroke:#14532D}
+  .rfseg.on{fill:#16A34A;stroke:#14532D}
   .cellnum{font-size:11px;fill:#94A3B8;font-family:Consolas,Menlo,monospace}
   .cellnum.on{fill:#F0FDF4}
   .cellcap{font-size:8.5px;fill:#94A3B8;font-family:Consolas,Menlo,monospace}
@@ -1026,7 +1028,7 @@ const FRAMES = [
     mods:["lsu","l1sm"], edges:[["lsu_l1sm_req","写 · addr[8]=0..28 · wdata=in[0..7]"]],
     ba:{lsu:["8-lane 锁步发出写请求","addr=0..28 · wdata=in[0..7]"],
         l1sm:["SM 行 0 钉扎（复位即有效）","逐 lane 写 word 0..7","无缺失 · 无回填 · 不经 memif"]},
-    act:{lsu:255, l1sm:255}, st:{pc:14, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC3960000,0xC3480000,0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000], r5:[0,4,8,12,16,20,24,28], r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:14 },
+    act:{l1smSM:true, lsu:255, l1sm:255}, st:{pc:14, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC3960000,0xC3480000,0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000], r5:[0,4,8,12,16,20,24,28], r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:14 },
 
   { title:"写应答", ch:"l1sm → lsu",
     desc:"STS r4, r5：共享存储——每 lane 地址 = SHBASE+R[r5] = 0+tid×4（0/4/.../28），数据 R[r4] = in[tid] 写入共享存储 SMem。同步一拍完成，不写寄存器。",
@@ -1034,7 +1036,7 @@ const FRAMES = [
     mods:["l1sm","lsu"], edges:[["l1sm_lsu_rsp","写应答"]],
     ba:{l1sm:["写入完成","返回写应答"],
         lsu:["接收写应答"]},
-    act:{l1sm:255, lsu:255}, st:{pc:14, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC3960000,0xC3480000,0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000], r5:[0,4,8,12,16,20,24,28], r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:14 },
+    act:{l1smSM:true, l1sm:255, lsu:255}, st:{pc:14, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC3960000,0xC3480000,0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000], r5:[0,4,8,12,16,20,24,28], r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:14 },
 
   { title:"完成（无寄存器写回）", ch:"lsu → ws",
     desc:"STS r4, r5：共享存储——每 lane 地址 = SHBASE+R[r5] = 0+tid×4（0/4/.../28），数据 R[r4] = in[tid] 写入共享存储 SMem。同步一拍完成，不写寄存器。",
@@ -1267,7 +1269,7 @@ const FRAMES = [
     mods:["lsu","l1sm"], edges:[["lsu_l1sm_req","读 · addr[8]=64..92 · SM 行 2"]],
     ba:{lsu:["8-lane 锁步发出读请求","addr=64..92（行 2 · word 0..7）"],
         l1sm:["SM 行 2 命中（钉扎有效）","逐 lane 读 word 0..7","无缺失 · 无回填 · 不经 memif","数据 = warp 2 写入的 in[16..23]"]},
-    act:{lsu:255, l1sm:255}, st:{pc:19, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[16,17,18,19,20,21,22,23], r5:16, r6:[64,68,72,76,80,84,88,92], r7:[0,1,2,3,4,5,6,7]}}, cur:19 },
+    act:{l1smSM:true, lsu:255, l1sm:255}, st:{pc:19, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[16,17,18,19,20,21,22,23], r5:16, r6:[64,68,72,76,80,84,88,92], r7:[0,1,2,3,4,5,6,7]}}, cur:19 },
 
   { title:"读应答", ch:"l1sm → lsu",
     desc:"LDS r4, r6：共享载入——每 lane 地址 = SHBASE+R[r6] = (tid^16)×4（64..92），从共享存储装载 32 位写入 r4。地址落在 SM 行 2——warp 0 读到的是 warp 2 经 STS 写入的 in[16..23]（tid^16 置换互读）。",
@@ -1275,7 +1277,7 @@ const FRAMES = [
     mods:["l1sm","lsu"], edges:[["l1sm_lsu_rsp","data[8] = in[16..23]"]],
     ba:{l1sm:["组装 8-lane 数据","word 0..7 → lane 0..7"],
         lsu:["接收数据","引导写回"]},
-    act:{l1sm:255, lsu:255}, st:{pc:19, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[16,17,18,19,20,21,22,23], r5:16, r6:[64,68,72,76,80,84,88,92], r7:[0,1,2,3,4,5,6,7]}}, cur:19 },
+    act:{l1smSM:true, l1sm:255, lsu:255}, st:{pc:19, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[16,17,18,19,20,21,22,23], r5:16, r6:[64,68,72,76,80,84,88,92], r7:[0,1,2,3,4,5,6,7]}}, cur:19 },
 
   { title:"写回", ch:"lsu → rf",
     desc:"LDS r4, r6：共享载入——每 lane 地址 = SHBASE+R[r6] = (tid^16)×4（64..92），从共享存储装载 32 位写入 r4。地址落在 SM 行 2——warp 0 读到的是 warp 2 经 STS 写入的 in[16..23]（tid^16 置换互读）。",
@@ -1888,14 +1890,16 @@ const NS = "http://www.w3.org/2000/svg";
 
 /* icache 横柱：16 条（每 line 一条横条，代表 32B 行宽），纵向堆叠（行 0 在顶），柱区水平居中于块 */
 (function() {
-  const N = 16, H = 1.4, GAP = 0.15, W = 120, X0 = 220 + (140 - W) / 2;
-  const Y0 = 194, Y1 = 218;
+  const N = 16, H = 2.6, GAP = 0.15, W = 120, X0 = 220 + (140 - W) / 2;
+  const Y0 = 192, Y1 = 216;
   const g = document.getElementById("icrows");
-  const step = (Y1 - Y0 - H) / (N - 1);
+  const step = H + GAP;
+  const total = N * step - GAP;
+  const start = Y0 + (Y1 - Y0 - total) / 2;
   for (let i = 0; i < N; i++) {
     const r = document.createElementNS(NS, "rect");
     r.setAttribute("class", "icrow");
-    r.setAttribute("x", X0); r.setAttribute("y", Y0 + i * step);
+    r.setAttribute("x", X0); r.setAttribute("y", start + i * step);
     r.setAttribute("width", W); r.setAttribute("height", H);
     r.setAttribute("rx", 0.5);
     g.appendChild(r);
@@ -1998,17 +2002,27 @@ function setCells(act) {
       r.classList.toggle("on", !!on);
       if (t) t.classList.toggle("on", !!on);
     });
-    if (mod === "l1sm") {                      /* 竖柱 bank 同步点亮 */
-      document.querySelectorAll(".l1col").forEach((el, k) =>
-        el.classList.toggle("on", !!((bits >> (k >> 1)) & 1)));
+    if (mod === "l1sm") {                      /* 竖柱分区点亮：bank 命中亮对应柱段，当前场景分区提示色 */
+      const smScene = !!(act && act.l1smSM);
+      const X0 = 558 + (150 - 139) / 2, STEP = 18;
+      document.querySelectorAll("#l1cols .l1col").forEach((el) => {
+        const idx = Math.round((+el.getAttribute("x") - X0) / STEP);
+        const hit = !!((bits >> idx) & 1);
+        el.classList.toggle("on", hit);
+        el.classList.toggle("l1hit", !hit && smScene === el.classList.contains("sm"));
+      });
     }
     if (mod === "icache") {                    /* 横柱 line 同步点亮（bit i = line i） */
       document.querySelectorAll(".icrow").forEach((el, i) =>
         el.classList.toggle("on", !!((bits >> i) & 1)));
     }
-    if (mod === "rf") {                        /* 竖柱 lane 同步点亮（bit l = lane l） */
-      document.querySelectorAll(".rfcol").forEach((col, l) =>
-        col.classList.toggle("on", !!((bits >> l) & 1)));
+    if (mod === "rf") {                        /* 竖柱 lane 点亮：只点在途 warp 段（.rfseg.cur），不连亮整柱 */
+      document.querySelectorAll(".rfcol").forEach((col, l) => {
+        const hit = !!((bits >> l) & 1);
+        col.querySelectorAll(".rfseg").forEach(seg => {
+          seg.classList.toggle("on", hit && seg.classList.contains("cur"));
+        });
+      });
     }
   }
 }
