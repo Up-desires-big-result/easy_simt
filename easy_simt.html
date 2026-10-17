@@ -272,9 +272,9 @@
     <path d="M384,330 H364 V420 H360" stroke="#0891B2" marker-end="url(#m-cyan)"/></g>
 
   <g class="edge" data-m="ws lsu"><title>ws_lsu_issue</title>
-    <path d="M170,464 V488 H450 V464" stroke="#7C3AED" marker-end="url(#m-violet)"/></g>
+    <path d="M130,464 V488 H450 V464" stroke="#7C3AED" marker-end="url(#m-violet)"/></g>
   <g class="edge" data-m="ws lsu"><title>lsu_ws_stall / lsu_ws_wbdone</title>
-    <path d="M420,464 V500 H160 V464" stroke="#0891B2" marker-end="url(#m-cyan)"/></g>
+    <path d="M420,464 V500 H196 V464" stroke="#0891B2" marker-end="url(#m-cyan)"/></g>
 
   <g class="edge" data-m="ws rf"><title>ws_rf_rd</title>
     <path d="M196,340 H220" stroke="#16A34A" marker-end="url(#m-green)"/></g>
@@ -2005,11 +2005,22 @@ function bubble(edge, text, color) {
   const r = p.getBoundingClientRect(), sr = stagebox.getBoundingClientRect();
   const div = document.createElement("div");
   div.className = "payload";
-  div.style.left = (r.left + r.width/2 - sr.left) + "px";
-  div.style.top  = (r.top  - sr.top) + "px";
-  if (color) div.style.background = color;
+  let x = r.left + r.width/2 - sr.left, y = r.top - sr.top;
+  /* 防叠：与已放置气泡水平重叠时向下错行 */
+  const placed = [...stagebox.querySelectorAll(".payload")];
   div.innerHTML = text;
+  div.style.visibility = "hidden";
   stagebox.appendChild(div);
+  for (const o of placed) {
+    const ow = o.getBoundingClientRect(), dw = div.getBoundingClientRect();
+    const ox = ow.left + ow.width/2 - sr.left, oy = parseFloat(o.style.top);
+    if (Math.abs(ox - x) < (ow.width + dw.width) / 2 + 6 && Math.abs(oy - y) < 22)
+      y = oy + 22;                                  /* 同带重叠：压下一行 */
+  }
+  div.style.left = x + "px";
+  div.style.top  = y + "px";
+  if (color) div.style.background = color;
+  div.style.visibility = "";
 }
 function clearBubbles() { stagebox.querySelectorAll(".payload").forEach(p => p.remove()); }
 
