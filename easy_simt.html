@@ -142,7 +142,7 @@
   <g class="blk" data-mod="bs">
     <rect x="64" y="96" width="132" height="108" rx="5" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.3"/>
     <text class="bname" x="74" y="114">bs</text>
-    <text class="bfull" x="90" y="114">块调度</text>
+    <text class="bfull" x="108" y="114">块调度</text>
     <text class="brole" x="74" y="130">grid 32 块 · 单块串行驻留</text>
     <text class="actline" id="act-bs" x="74" y="150"><tspan x="74"></tspan><tspan x="74" dy="14"></tspan><tspan x="74" dy="14"></tspan></text>
     <g class="cells" data-mod="bs"></g>
@@ -151,7 +151,7 @@
   <g class="blk" data-mod="ws">
     <rect x="64" y="216" width="132" height="248" rx="5" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
     <text class="bname" x="74" y="234">ws</text>
-    <text class="bfull" x="92" y="234">SIMT 前端与调度</text>
+    <text class="bfull" x="110" y="234">SIMT 前端与调度</text>
     <text class="brole" x="74" y="250">4warp · 栈4 · BRT 8</text>
     <text class="actline" id="act-ws" x="74" y="270"><tspan x="74"></tspan><tspan x="74" dy="14"></tspan><tspan x="74" dy="14"></tspan><tspan x="74" dy="14"></tspan></text>
     <g class="cells" data-mod="ws"></g>
@@ -207,7 +207,7 @@
   <g class="blk" data-mod="memif">
     <rect x="558" y="96" width="150" height="130" rx="5" fill="#FFF7ED" stroke="#D97706" stroke-width="1.3"/>
     <text class="bname" x="568" y="114">memif</text>
-    <text class="bfull" x="612" y="114">AXI4 主接口</text>
+    <text class="bfull" x="625" y="114">AXI4 主接口</text>
     <text class="brole" x="568" y="130">单在途事务 · icache 优先</text>
     <text class="actline" id="act-memif" x="568" y="150"><tspan x="568"></tspan><tspan x="568" dy="14"></tspan><tspan x="568" dy="14"></tspan><tspan x="568" dy="14"></tspan></text>
     <g class="cells" data-mod="memif"></g>
@@ -409,7 +409,7 @@ const FRAMES = [
     pl:"block_idx=0 · n=32 · shbase=0",
     mods:["bs","ws"], edges:[["bs_ws_launch","block_idx=0 · n=32 · shbase=0"]],
     ba:{bs:["下发块至前端","块内四组线程","单块串行驻留"],
-        ws:["接收下发块","首个线程组进入在途","全量掩码启动"]},
+        ws:["接收下发块","首个线程束进入在途","全量掩码启动"]},
     act:{bs:1, ws:1}, st:{pc:0, sb:[], regs:{}}, cur:0 },
 
   { title:"发出取指请求（缺失）", ch:"ws → icache",
@@ -1068,22 +1068,22 @@ const FRAMES = [
     desc:"BAR：块屏障——warp 到达屏障后阻塞，本块全部 4 个 warp 均到达后同时释放，各 warp 从 PC+1 继续；释放时共享内存写入对本块全部 warp 可见。warp 0 首个到达：掩码 0xFF 全量通过校验，记到达位，前端切换至 warp 1 执行其前段；warp 0 阻塞等待其余 3 个 warp 到达。",
     pl:"bar_arr[0]=1 · 计数 1/4 · PC ← 16 · 切换在途 warp 1",
     mods:["ws"], edges:[],
-    ba:{ws:["全量掩码校验通过","记录到达位","计数并切换在途线程组","阻塞等待其余线程组"]},
+    ba:{ws:["全量掩码校验通过","记录到达位","计数并切换在途线程束","阻塞等待其余线程束"]},
     act:{ws:2}, st:{pc:16, warp:1, sb:[], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC3960000,0xC3480000,0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000], r5:[0,4,8,12,16,20,24,28], r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:15 },
 
   { title:"屏障等待（warp 1..3 执行前段）", ch:"ws",
     desc:"BAR：块屏障——warp 到达屏障后阻塞，本块全部 4 个 warp 均到达后同时释放。warp 1..3 依次独占执行 pc=0..15 前段（各 warp 寄存器堆独立 bank，tid 各为 8..15/16..23/24..31）：各自 LDG miss 各回填一行 L1、STS 各写一行 SM，相继到达屏障。",
     pl:"计数 2/4 → 3/4 → 4/4（warp1..3 相继到达）",
     mods:["ws","l1sm"], edges:[],
-    ba:{ws:["兄弟线程组装载回填","兄弟线程组写共享并到达","兄弟线程组完成前段到达","兄弟线程组完成前段到达"],
-        l1sm:["各线程组各自回填一行缓存","各线程组写入共享行"]},
+    ba:{ws:["兄弟线程束装载回填","兄弟线程束写共享并到达","兄弟线程束完成前段到达","兄弟线程束完成前段到达"],
+        l1sm:["各线程束各自回填一行缓存","各线程束写入共享行"]},
     act:{ws:14, l1sm:255, rf:255, rfWarps:14}, st:{pc:16, warp:1, sb:[], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC3960000,0xC3480000,0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000], r5:[0,4,8,12,16,20,24,28], r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:15 },
 
   { title:"屏障释放 + 发出取指请求（缺失）", ch:"ws → icache",
     desc:"IADD r5, r0, #16：整数加法（立即数型）——r0 恒零加 16，r5 ← 16 广播（为 XOR tid^16 准备交换掩码）。屏障已凑齐 4 warp 统一释放，warp 0 从 PC+1 继续。",
     pl:"pc=16（行 2 首访）",
     mods:["ws","icache"], edges:[["ws_icache_req","pc=16"]],
-    ba:{ws:["全部线程组到达屏障释放","从屏障处继续执行","发出取指请求"],
+    ba:{ws:["全部线程束到达屏障释放","从屏障处继续执行","发出取指请求"],
         icache:["查行未命中","缺失 · 等待回填"]},
     act:{ws:1}, st:{pc:16, sb:[], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[0xC3960000,0xC3480000,0xC2C80000,0,0x42C80000,0x43480000,0x43960000,0xC3960000], r5:[0,4,8,12,16,20,24,28], r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:16 },
 
@@ -1270,7 +1270,7 @@ const FRAMES = [
     pl:"addr[8]=0x40..0x5C · 行 2 word 0..7 ← warp 2 数据",
     mods:["lsu","l1sm"], edges:[["lsu_l1sm_req","读 · addr[8]=64..92 · SM 行 2"]],
     ba:{lsu:["八线程锁步发出读请求","地址向量"],
-        l1sm:["共享行命中","逐线程读字","无缺失无回填","读到兄弟线程组的数据"]},
+        l1sm:["共享行命中","逐线程读字","无缺失无回填","读到兄弟线程束的数据"]},
     act:{l1smSM:true, lsu:255, l1sm:255}, st:{pc:19, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:[16,17,18,19,20,21,22,23], r5:16, r6:[64,68,72,76,80,84,88,92], r7:[0,1,2,3,4,5,6,7]}}, cur:19 },
 
   { title:"读应答", ch:"l1sm → lsu",
