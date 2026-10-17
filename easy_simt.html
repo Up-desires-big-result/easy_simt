@@ -306,7 +306,9 @@
   <g class="edge" data-m="memif ext"><title>AXI4（AW/W/B/AR/R 五通道）</title>
     <path d="M708,132 H790" stroke="#1E293B" marker-end="url(#m-dark)"/></g>
   <g class="edge" data-m="memif ext"><title>AXI4 数据读（l1sm · AR/R）</title>
-    <path d="M740,240 V300" stroke="#1E293B" marker-end="url(#m-dark)"/></g>
+    <path d="M708,180 H760 V327 H790" stroke="#1E293B" marker-end="url(#m-dark)"/></g>
+  <g class="edge" data-m="memif ext"><title>AXI4 数据返回（l1sm · R）</title>
+    <path d="M790,357 H760 V210 H708" stroke="#1E293B" marker-end="url(#m-dark)"/></g>
 
   <!-- 图例 -->
   <g>
@@ -881,7 +883,7 @@ const FRAMES = [
   { title:"AXI 读数据（R）", ch:"数据段 → memif",
     desc:"LDG r4, r1, r3：全局装载——每 lane 地址 = R[r1]+R[r3] = 0x100000+tid×4，从 in 数组装载 32 位写入 r4（in[i] = ((i%7)-3)×100）。",
     pl:"rdata=in[0..7]（32B）· rresp=OKAY · 片外延迟 MEM_LAT=20 拍",
-    mods:["dmem","memif"], edges:[["AXI4 数据读（l1sm · AR/R）","R: in[0..7]（32B）"]],
+    mods:["dmem","memif"], edges:[["AXI4 数据返回（l1sm · R）","R: in[0..7]（32B）"]],
     ba:{dmem:["返回 in[0..7]：8 字","-300,-200,-100,0,100,200,300,-300"],
         memif:["接收 R 数据（MEM_LAT=20）"]},
     act:{memif:1}, st:{pc:11, sb:["r4"], pred:{p1:0}, regs:{r1:0x00100000, r2:0x00200000, r3:[0,4,8,12,16,20,24,28], r4:0x0, r5:0x0, r6:[0,1,2,3,4,5,6,7], r7:[0,1,2,3,4,5,6,7]}}, cur:11 },
