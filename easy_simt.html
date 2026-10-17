@@ -1891,7 +1891,7 @@ const NS = "http://www.w3.org/2000/svg";
 /* icache 横柱：16 条（每 line 一条横条，代表 32B 行宽），纵向堆叠（行 0 在顶），柱区水平居中于块 */
 (function() {
   const N = 16, H = 2.6, GAP = 0.15, W = 120, X0 = 220 + (140 - W) / 2;
-  const Y0 = 192, Y1 = 216;
+  const Y0 = 170, Y1 = 214;   /* 柱区：actline 两行文字（至 y=164）之下，底部距块边框 6px */
   const g = document.getElementById("icrows");
   const step = H + GAP;
   const total = N * step - GAP;
@@ -2002,14 +2002,15 @@ function setCells(act) {
       r.classList.toggle("on", !!on);
       if (t) t.classList.toggle("on", !!on);
     });
-    if (mod === "l1sm") {                      /* 竖柱分区点亮：bank 命中亮对应柱段，当前场景分区提示色 */
+    if (mod === "l1sm") {                      /* 竖柱分区点亮：bank 命中只亮当前场景段（SM 帧亮 SM 段 / L1 帧亮 L1 段） */
       const smScene = !!(act && act.l1smSM);
       const X0 = 558 + (150 - 139) / 2, STEP = 18;
       document.querySelectorAll("#l1cols .l1col").forEach((el) => {
         const idx = Math.round((+el.getAttribute("x") - X0) / STEP);
         const hit = !!((bits >> idx) & 1);
-        el.classList.toggle("on", hit);
-        el.classList.toggle("l1hit", !hit && smScene === el.classList.contains("sm"));
+        const isSM = el.classList.contains("sm");
+        el.classList.toggle("on", hit && isSM === smScene);      /* 命中也只亮场景对应段 */
+        el.classList.toggle("l1hit", !hit && isSM === smScene);  /* 非命中柱：场景段提示色 */
       });
     }
     if (mod === "icache") {                    /* 横柱 line 同步点亮（bit i = line i） */
